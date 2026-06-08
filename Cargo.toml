@@ -5,6 +5,8 @@ members = [
     "crates/engine",
     "crates/compose-parser",
     "crates/pack-sentinel-core",
+    "crates/dockerfile-parser",
+    "crates/pack-dockerfile-core",
     "crates/cli",
     "crates/harness",
 ]

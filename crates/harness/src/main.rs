@@ -14,11 +14,25 @@ use std::fs;
 use std::path::Path;
 use std::process::ExitCode;
 
-use compose_parser::parse;
 use engine::{pack_version_hash, run_pack, Pack, ReportCore, Severity};
+use fact_model::FactModel;
+use pack_dockerfile_core::DockerfileCorePack;
 use pack_sentinel_core::SentinelCorePack;
 
 const MIN_RECALL: f64 = 0.90;
+
+/// Pick parser + pack by fixture extension (.Dockerfile vs .yml).
+fn build(path: &Path, content: &str) -> (FactModel, Box<dyn Pack>) {
+    let is_dockerfile = path
+        .extension()
+        .map(|x| x.eq_ignore_ascii_case("dockerfile"))
+        .unwrap_or(false);
+    if is_dockerfile {
+        (dockerfile_parser::parse(content), Box::new(DockerfileCorePack::new()))
+    } else {
+        (compose_parser::parse(content), Box::new(SentinelCorePack::new()))
+    }
+}
 
 struct Expect {
     sev: Severity,
@@ -89,7 +103,11 @@ fn main() -> ExitCode {
     let mut files: Vec<_> = match fs::read_dir(&corpus) {
         Ok(rd) => rd
             .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| p.extension().map(|x| x == "yml").unwrap_or(false))
+            .filter(|p| {
+                p.extension()
+                    .map(|x| x == "yml" || x.eq_ignore_ascii_case("dockerfile"))
+                    .unwrap_or(false)
+            })
             .collect(),
         Err(e) => {
             eprintln!("cannot read corpus dir {}: {e}", corpus.display());
@@ -98,7 +116,6 @@ fn main() -> ExitCode {
     };
     files.sort();
 
-    let pack = SentinelCorePack::new();
     let mut t = Totals::default();
     let mut miss_lines: Vec<String> = Vec::new();
     let mut fp_lines: Vec<String> = Vec::new();
@@ -115,8 +132,8 @@ fn main() -> ExitCode {
         let yml = fs::read_to_string(path).unwrap_or_default();
         let expects = parse_expects(&yml);
 
-        let model = parse(&yml);
-        let findings = run_pack(&pack, &model);
+        let (model, pack) = build(path, &yml);
+        let findings = run_pack(pack.as_ref(), &model);
 
         // determinism: same input -> same report_digest twice
         let digest = |m: &fact_model::FactModel, f: &[engine::Finding]| {
@@ -124,14 +141,14 @@ fn main() -> ExitCode {
             ReportCore {
                 model: m,
                 pack_id: pack.id().to_string(),
-                pack_version_hash: pack_version_hash(&pack),
+                pack_version_hash: pack_version_hash(pack.as_ref()),
                 findings: f,
                 verdict: &v,
             }
             .report_digest()
         };
-        let m2 = parse(&yml);
-        let f2 = run_pack(&pack, &m2);
+        let (m2, _) = build(path, &yml);
+        let f2 = run_pack(pack.as_ref(), &m2);
         let det_ok = digest(&model, &findings) == digest(&m2, &f2);
         if det_ok {
             t.det_pass += 1;

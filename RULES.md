@@ -168,3 +168,56 @@ only what's needed.
 No memory limit is set; a runaway container can exhaust host memory (DoS).
 
 **Fix:** set `deploy.resources.limits.memory` (or `mem_limit` in Compose v2).
+
+---
+
+# Dockerfile rules
+
+Applied to Dockerfiles (auto-detected, or `--type dockerfile`).
+
+## DOCKERFILE-CURL-PIPE-EXECUTION
+**High** · CWE-494
+
+A `RUN` pipes a downloaded script straight into a shell with no integrity check.
+
+```dockerfile
+# bad
+RUN curl -sSL https://get.example.com/install.sh | bash
+```
+**Fix:** download to a file, verify a checksum/signature, then execute.
+
+## DOCKERFILE-ADD-REMOTE-URL
+**Medium** · CWE-494
+
+`ADD` fetches a remote URL with no integrity verification.
+
+**Fix:** use `COPY` for local files, or `RUN curl` with a checksum check.
+
+## DOCKERFILE-BUILD-SECRET
+**Medium** · CWE-798
+
+A secret-like `ENV`/`ARG` has an inline value — it is baked into the image layers and
+visible in image history.
+
+**Fix:** use BuildKit secrets (`RUN --mount=type=secret`) or runtime env, not `ENV`/`ARG`.
+
+## DOCKERFILE-ROOT-USER
+**Medium** · CWE-250 · CIS-Docker 4.1
+
+The image sets `USER root`, or never sets `USER` (Docker defaults to root).
+
+**Fix:** create and switch to a non-root `USER` before the entrypoint.
+
+## DOCKERFILE-BASE-IMAGE-UNPINNED
+**Low** · CWE-494, CWE-1357
+
+A `FROM` base image is not pinned by digest — the build is not reproducible.
+
+**Fix:** `FROM repo@sha256:<digest>`.
+
+## DOCKERFILE-SUDO
+**Low** · CWE-250
+
+A `RUN` uses `sudo`, which is unnecessary in a build and can mask privilege issues.
+
+**Fix:** run build steps as the appropriate user directly.

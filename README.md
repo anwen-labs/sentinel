@@ -1,9 +1,9 @@
 # Sentinel
 
-**Deterministic Docker Compose security scanner.** Paste or point it at a
-`docker-compose.yml` and get a reproducible list of security misconfigurations —
-exposed Docker sockets, default credentials, privileged containers, unpinned images,
-and more.
+**Deterministic security scanner for Docker Compose and Dockerfiles.** Point it at a
+`docker-compose.yml` or `Dockerfile` and get a reproducible list of security
+misconfigurations — exposed Docker sockets, default credentials, privileged
+containers, `curl | sh` in builds, unpinned images, and more.
 
 - **Deterministic** — same input always produces the same findings and the same
   `report_digest` (a real SHA-256 over the normalized facts + engine/pack versions +
@@ -12,9 +12,9 @@ and more.
   uploaded anywhere; the tool makes no network calls.
 - **CI-ready** — one exit code gates your pipeline; the same binary runs on your laptop.
 
-> ⚠️ **Early preview — actively developed.** Today Sentinel scans **Docker Compose**.
-> Broader coverage (Dockerfiles, Kubernetes manifests, and more) is on the way toward
-> the first tagged release. There is **no stable release yet** — build from source to try it.
+> ⚠️ **Early preview — actively developed.** Sentinel scans **Docker Compose** and
+> **Dockerfiles** today; Kubernetes manifests and more are on the way. There is **no
+> stable release yet** — build from source to try it.
 
 ## Install
 
@@ -32,6 +32,7 @@ Prebuilt binaries and a GitHub Action will be published with the first tagged re
 
 ```sh
 sentinel scan docker-compose.yml                  # human-readable findings
+sentinel scan Dockerfile                          # Dockerfiles too (auto-detected)
 cat docker-compose.yml | sentinel scan -          # read from stdin
 sentinel scan docker-compose.yml --format json    # machine-readable report
 sentinel scan docker-compose.yml --format sarif   # SARIF for GitHub code scanning

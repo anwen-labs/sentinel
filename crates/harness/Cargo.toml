@@ -12,3 +12,5 @@ fact-model = { path = "../fact-model" }
 engine = { path = "../engine" }
 compose-parser = { path = "../compose-parser" }
 pack-sentinel-core = { path = "../pack-sentinel-core" }
+dockerfile-parser = { path = "../dockerfile-parser" }
+pack-dockerfile-core = { path = "../pack-dockerfile-core" }

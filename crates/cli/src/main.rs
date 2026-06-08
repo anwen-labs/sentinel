@@ -1,18 +1,76 @@
-//! `sentinel` — deterministic Docker Compose security scanner.
+//! `sentinel` — deterministic security scanner for Docker Compose and Dockerfiles.
 //!
-//!   sentinel scan compose.yml
-//!   cat compose.yml | sentinel scan -
-//!   sentinel scan compose.yml --format json
-//!   sentinel scan compose.yml --fail-on high     # exit 1 if any High/Critical
+//!   sentinel scan docker-compose.yml
+//!   sentinel scan Dockerfile
+//!   cat Dockerfile | sentinel scan - --type dockerfile
+//!   sentinel scan compose.yml --format sarif --fail-on high
 
 use std::io::Read;
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use compose_parser::try_parse;
 use engine::{full_report_json, pack_version_hash, run_pack, sarif_json, Pack, ReportCore, Severity};
+use fact_model::FactModel;
+use pack_dockerfile_core::DockerfileCorePack;
 use pack_sentinel_core::SentinelCorePack;
+
+#[derive(Clone, Copy, ValueEnum)]
+enum InputType {
+    /// Auto-detect from filename/content.
+    Auto,
+    Compose,
+    Dockerfile,
+}
+
+/// Detect the input type from the path and content.
+fn detect_type(path: &str, input: &str) -> InputType {
+    let base = path
+        .rsplit(|c| c == '/' || c == '\\')
+        .next()
+        .unwrap_or(path)
+        .to_lowercase();
+    if base == "dockerfile" || base.ends_with(".dockerfile") || base == "containerfile" {
+        return InputType::Dockerfile;
+    }
+    if base.ends_with(".yml") || base.ends_with(".yaml") {
+        return InputType::Compose;
+    }
+    for line in input.lines() {
+        let t = line.trim();
+        if t.is_empty() || t.starts_with('#') {
+            continue;
+        }
+        if t.len() >= 5 && t[..5].eq_ignore_ascii_case("from ") {
+            return InputType::Dockerfile;
+        }
+        break;
+    }
+    InputType::Compose
+}
+
+/// Parse the input and pick the matching rule pack.
+fn build_model_and_pack(
+    input: &str,
+    kind: InputType,
+    path: &str,
+    strict: bool,
+) -> Result<(FactModel, Box<dyn Pack>), String> {
+    let resolved = match kind {
+        InputType::Auto => detect_type(path, input),
+        other => other,
+    };
+    match resolved {
+        InputType::Dockerfile => Ok((
+            dockerfile_parser::parse(input),
+            Box::new(DockerfileCorePack::new()),
+        )),
+        _ => Ok((
+            compose_parser::try_parse(input)?,
+            Box::new(SentinelCorePack::with_options(strict)),
+        )),
+    }
+}
 
 #[derive(Parser)]
 #[command(
@@ -37,8 +95,11 @@ enum Command {
 struct VerifyArgs {
     /// Path to a saved JSON report (from `sentinel scan --format json`).
     report: String,
-    /// Path to the compose file to re-scan, or "-" to read from stdin.
+    /// Path to the file to re-scan, or "-" to read from stdin.
     compose: String,
+    /// Input type (auto-detected by default).
+    #[arg(long, value_enum, default_value_t = InputType::Auto)]
+    r#type: InputType,
     /// Use the strict rule set (must match how the report was produced).
     #[arg(long)]
     strict: bool,
@@ -46,8 +107,12 @@ struct VerifyArgs {
 
 #[derive(Args)]
 struct ScanArgs {
-    /// Path to a compose file, or "-" to read from stdin.
+    /// Path to a compose file or Dockerfile, or "-" to read from stdin.
     path: String,
+
+    /// Input type (auto-detected by default).
+    #[arg(long, value_enum, default_value_t = InputType::Auto)]
+    r#type: InputType,
 
     /// Output format.
     #[arg(long, value_enum, default_value_t = Format::Text)]
@@ -123,22 +188,21 @@ fn scan(args: ScanArgs) -> ExitCode {
         }
     };
 
-    let model = match try_parse(&input) {
-        Ok(m) => m,
+    let (model, pack) = match build_model_and_pack(&input, args.r#type, &args.path, args.strict) {
+        Ok(mp) => mp,
         Err(e) => {
             eprintln!("error: {e}");
             return ExitCode::from(2);
         }
     };
 
-    let pack = SentinelCorePack::with_options(args.strict);
-    let findings = run_pack(&pack, &model);
+    let findings = run_pack(pack.as_ref(), &model);
     let verdict = pack.verdict(&findings);
 
     let core = ReportCore {
         model: &model,
         pack_id: pack.id().to_string(),
-        pack_version_hash: pack_version_hash(&pack),
+        pack_version_hash: pack_version_hash(pack.as_ref()),
         findings: &findings,
         verdict: &verdict,
     };
@@ -160,7 +224,7 @@ fn scan(args: ScanArgs) -> ExitCode {
             let uri = if args.path == "-" { "docker-compose.yml" } else { args.path.as_str() };
             println!("{}", sarif_json(&findings, uri).to_canonical_string());
         }
-        Format::Text => print_text(&args, &model, &findings, &verdict, &digest),
+        Format::Text => print_text(&args, pack.id(), &model, &findings, &verdict, &digest),
     }
 
     // CI gate: exit non-zero if any finding >= fail-on threshold.
@@ -175,20 +239,21 @@ fn scan(args: ScanArgs) -> ExitCode {
 
 fn print_text(
     args: &ScanArgs,
+    pack_id: &str,
     model: &fact_model::FactModel,
     findings: &[engine::Finding],
     verdict: &engine::Verdict,
     digest: &str,
 ) {
     if !args.quiet {
-        println!("sentinel {} — sentinel-core", env!("CARGO_PKG_VERSION"));
+        println!("sentinel {} — {}", env!("CARGO_PKG_VERSION"), pack_id);
         println!(
             "facts: {} entities, {} relations",
             model.entities.len(),
             model.relations.len()
         );
         if model.entities.is_empty() {
-            println!("(no services found — nothing to assess)");
+            println!("(nothing to assess)");
         }
         println!();
 
@@ -255,20 +320,19 @@ fn verify(args: VerifyArgs) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let model = match try_parse(&input) {
-        Ok(m) => m,
+    let (model, pack) = match build_model_and_pack(&input, args.r#type, &args.compose, args.strict) {
+        Ok(mp) => mp,
         Err(e) => {
             eprintln!("error: {e}");
             return ExitCode::from(2);
         }
     };
-    let pack = SentinelCorePack::with_options(args.strict);
-    let findings = run_pack(&pack, &model);
+    let findings = run_pack(pack.as_ref(), &model);
     let verdict = pack.verdict(&findings);
     let core = ReportCore {
         model: &model,
         pack_id: pack.id().to_string(),
-        pack_version_hash: pack_version_hash(&pack),
+        pack_version_hash: pack_version_hash(pack.as_ref()),
         findings: &findings,
         verdict: &verdict,
     };

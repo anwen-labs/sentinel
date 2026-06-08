@@ -54,6 +54,10 @@ pub enum EntityKind {
     Datastore,
     Capability,
     Host,
+    /// A Dockerfile build stage (one per `FROM`).
+    Stage,
+    /// A notable Dockerfile instruction flagged for risk (RUN/ADD/COPY/...).
+    Instruction,
 }
 
 impl EntityKind {
@@ -71,6 +75,8 @@ impl EntityKind {
             EntityKind::Datastore => "datastore",
             EntityKind::Capability => "capability",
             EntityKind::Host => "host",
+            EntityKind::Stage => "stage",
+            EntityKind::Instruction => "instruction",
         }
     }
 }

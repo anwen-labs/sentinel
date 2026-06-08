@@ -119,8 +119,10 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "compose-parser",
+ "dockerfile-parser",
  "engine",
  "fact-model",
+ "pack-dockerfile-core",
  "pack-sentinel-core",
  "serde_json",
 ]
@@ -169,6 +171,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "dockerfile-parser"
+version = "0.1.0"
+dependencies = [
+ "fact-model",
+]
+
+[[package]]
 name = "encoding_rs"
 version = "0.8.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -212,8 +221,10 @@ name = "harness"
 version = "0.1.0"
 dependencies = [
  "compose-parser",
+ "dockerfile-parser",
  "engine",
  "fact-model",
+ "pack-dockerfile-core",
  "pack-sentinel-core",
 ]
 
@@ -270,6 +281,14 @@ name = "once_cell_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
+
+[[package]]
+name = "pack-dockerfile-core"
+version = "0.1.0"
+dependencies = [
+ "engine",
+ "fact-model",
+]
 
 [[package]]
 name = "pack-sentinel-core"
