@@ -388,7 +388,13 @@ fn parse_volume(b: &mut Builder, svc: &str, svc_id: &str, path: &str, v: &Yaml) 
 }
 
 fn is_secret_like(name: &str) -> bool {
-    let norm: String = name.to_uppercase().chars().filter(|c| *c != '_').collect();
+    let upper = name.to_uppercase();
+    // `*_FILE` points to a secret file (the recommended Docker secrets pattern) —
+    // it is a path, not an inline secret, so don't treat it as secret-bearing.
+    if upper.ends_with("_FILE") {
+        return false;
+    }
+    let norm: String = upper.chars().filter(|c| *c != '_').collect();
     SECRET_NAME_FRAGMENTS.iter().any(|frag| norm.contains(frag))
 }
 
@@ -464,6 +470,18 @@ mod tests {
         let a = parse(yaml).model_hash();
         let b = parse(yaml).model_hash();
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn password_file_is_not_treated_as_inline_secret() {
+        let yaml = "services:\n  app:\n    image: nginx:1.25\n    environment:\n      DB_PASSWORD_FILE: /run/secrets/db\n";
+        let fm = parse(yaml);
+        let ev = fm
+            .entities
+            .iter()
+            .find(|e| e.id == "env_var:app/DB_PASSWORD_FILE")
+            .expect("env var entity");
+        assert_eq!(ev.attr("value_class").and_then(|v| v.as_str()), Some("normal"));
     }
 
     #[test]
