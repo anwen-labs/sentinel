@@ -362,13 +362,76 @@ fn r12_host_pid_ipc(m: &FactModel) -> Vec<Finding> {
     out
 }
 
+// --- Hardening rules (--strict only) --------------------------------------
+fn services_missing<'a>(
+    m: &'a FactModel,
+    attr: &'a str,
+) -> impl Iterator<Item = &'a fact_model::Entity> {
+    m.entities
+        .iter()
+        .filter(|e| e.kind == EntityKind::Service)
+        .filter(move |e| e.attr(attr).and_then(|v| v.as_bool()) == Some(false))
+}
+
+fn h1_no_new_privileges(m: &FactModel) -> Vec<Finding> {
+    services_missing(m, "no_new_privileges")
+        .map(|e| {
+            finding(
+                "NO-NEW-PRIVILEGES-MISSING",
+                &["CWE-250"],
+                Severity::Low,
+                &e.id,
+                format!("Service '{}' does not set no-new-privileges — processes can gain privileges via setuid binaries", svc_name(&e.id)),
+                "Add 'security_opt: [\"no-new-privileges:true\"]'.",
+            )
+        })
+        .collect()
+}
+
+fn h2_cap_drop_all(m: &FactModel) -> Vec<Finding> {
+    services_missing(m, "caps_dropped_all")
+        .map(|e| {
+            finding(
+                "CAP-DROP-ALL-MISSING",
+                &["CWE-250"],
+                Severity::Low,
+                &e.id,
+                format!("Service '{}' does not drop all capabilities — keeps Docker's default capability set", svc_name(&e.id)),
+                "Add 'cap_drop: [ALL]' and 'cap_add' only the capabilities you need.",
+            )
+        })
+        .collect()
+}
+
+fn h3_no_resource_limits(m: &FactModel) -> Vec<Finding> {
+    services_missing(m, "has_mem_limit")
+        .map(|e| {
+            finding(
+                "NO-RESOURCE-LIMITS",
+                &["CWE-400"],
+                Severity::Low,
+                &e.id,
+                format!("Service '{}' has no memory limit — a runaway container can exhaust host memory (DoS)", svc_name(&e.id)),
+                "Set a memory limit (deploy.resources.limits.memory, or mem_limit in v2).",
+            )
+        })
+        .collect()
+}
+
 pub struct SentinelCorePack {
     rules: Vec<Box<dyn Rule>>,
 }
 
 impl SentinelCorePack {
+    /// Default rule set (high-signal rules only).
     pub fn new() -> Self {
-        let rules: Vec<Box<dyn Rule>> = vec![
+        Self::with_options(false)
+    }
+
+    /// Build the pack; `strict` adds best-practice hardening rules that fire
+    /// broadly (no-new-privileges, cap-drop-all, resource limits).
+    pub fn with_options(strict: bool) -> Self {
+        let mut rules: Vec<Box<dyn Rule>> = vec![
             Box::new(FnRule { id: "DOCKER-SOCKET-MOUNT", f: r1_docker_socket }),
             Box::new(FnRule { id: "PRIVILEGED-CONTAINER", f: r2_privileged }),
             Box::new(FnRule { id: "DANGEROUS-CAPABILITY", f: r3_dangerous_cap }),
@@ -382,6 +445,11 @@ impl SentinelCorePack {
             Box::new(FnRule { id: "SENSITIVE-HOST-PATH-MOUNT", f: r11_sensitive_host_mount }),
             Box::new(FnRule { id: "HOST-PID-IPC", f: r12_host_pid_ipc }),
         ];
+        if strict {
+            rules.push(Box::new(FnRule { id: "NO-NEW-PRIVILEGES-MISSING", f: h1_no_new_privileges }));
+            rules.push(Box::new(FnRule { id: "CAP-DROP-ALL-MISSING", f: h2_cap_drop_all }));
+            rules.push(Box::new(FnRule { id: "NO-RESOURCE-LIMITS", f: h3_no_resource_limits }));
+        }
         Self { rules }
     }
 }
@@ -411,5 +479,46 @@ impl Pack for SentinelCorePack {
             status,
             pack_policy: "any Critical or High => Flagged-Gap".to_string(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use engine::run_pack;
+    use fact_model::{Entity, Origin, Provenance, SourceDescriptor};
+    use std::collections::BTreeMap;
+
+    fn bare_service_model() -> FactModel {
+        let mut attrs = BTreeMap::new();
+        attrs.insert("no_new_privileges".into(), AttrValue::Bool(false));
+        attrs.insert("caps_dropped_all".into(), AttrValue::Bool(false));
+        attrs.insert("has_mem_limit".into(), AttrValue::Bool(false));
+        FactModel {
+            schema_version: "0".into(),
+            source: SourceDescriptor {
+                kind: "docker_compose".into(),
+                input_hash: String::new(),
+                parser_version: String::new(),
+            },
+            entities: vec![Entity {
+                id: "service:app".into(),
+                kind: EntityKind::Service,
+                attributes: attrs,
+                provenance: Provenance {
+                    source_path: String::new(),
+                    origin: Origin::Explicit,
+                },
+            }],
+            relations: vec![],
+        }
+    }
+
+    #[test]
+    fn strict_adds_three_hardening_findings() {
+        let m = bare_service_model();
+        let default_n = run_pack(&SentinelCorePack::new(), &m).len();
+        let strict_n = run_pack(&SentinelCorePack::with_options(true), &m).len();
+        assert_eq!(strict_n - default_n, 3);
     }
 }

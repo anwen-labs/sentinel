@@ -39,6 +39,9 @@ struct VerifyArgs {
     report: String,
     /// Path to the compose file to re-scan, or "-" to read from stdin.
     compose: String,
+    /// Use the strict rule set (must match how the report was produced).
+    #[arg(long)]
+    strict: bool,
 }
 
 #[derive(Args)]
@@ -57,6 +60,10 @@ struct ScanArgs {
     /// Only print the verdict line and digest.
     #[arg(long)]
     quiet: bool,
+
+    /// Include best-practice hardening rules (no-new-privileges, cap-drop, memory limits).
+    #[arg(long)]
+    strict: bool,
 }
 
 #[derive(Clone, ValueEnum)]
@@ -124,7 +131,7 @@ fn scan(args: ScanArgs) -> ExitCode {
         }
     };
 
-    let pack = SentinelCorePack::new();
+    let pack = SentinelCorePack::with_options(args.strict);
     let findings = run_pack(&pack, &model);
     let verdict = pack.verdict(&findings);
 
@@ -252,7 +259,7 @@ fn verify(args: VerifyArgs) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let pack = SentinelCorePack::new();
+    let pack = SentinelCorePack::with_options(args.strict);
     let findings = run_pack(&pack, &model);
     let verdict = pack.verdict(&findings);
     let core = ReportCore {

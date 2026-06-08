@@ -132,6 +132,22 @@ fn parse_service(b: &mut Builder, name: &str, svc: &Yaml) {
         "ipc_mode".into(),
         AttrValue::Enum(svc["ipc"].as_str().unwrap_or("").to_string()),
     );
+    // hardening flags (used by --strict rules)
+    attrs.insert(
+        "no_new_privileges".into(),
+        AttrValue::Bool(yaml_list_contains(&svc["security_opt"], "no-new-privileges:true")),
+    );
+    attrs.insert(
+        "caps_dropped_all".into(),
+        AttrValue::Bool(yaml_list_contains(&svc["cap_drop"], "ALL")),
+    );
+    attrs.insert(
+        "has_mem_limit".into(),
+        AttrValue::Bool(
+            !svc["mem_limit"].is_badvalue()
+                || !svc["deploy"]["resources"]["limits"]["memory"].is_badvalue(),
+        ),
+    );
 
     b.entity(Entity {
         id: svc_id.clone(),
@@ -406,6 +422,15 @@ fn emit_volume(b: &mut Builder, svc: &str, svc_id: &str, path: &str, source: &st
         },
     });
     b.relation(RelationKind::Mounts, svc_id, &id);
+}
+
+/// True if a YAML sequence contains the given string (case-insensitive).
+fn yaml_list_contains(y: &Yaml, needle: &str) -> bool {
+    y.as_vec().is_some_and(|items| {
+        items
+            .iter()
+            .any(|i| i.as_str().is_some_and(|s| s.eq_ignore_ascii_case(needle)))
+    })
 }
 
 fn is_secret_like(name: &str) -> bool {

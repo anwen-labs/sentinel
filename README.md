@@ -36,6 +36,7 @@ cat docker-compose.yml | sentinel scan -          # read from stdin
 sentinel scan docker-compose.yml --format json    # machine-readable report
 sentinel scan docker-compose.yml --format sarif   # SARIF for GitHub code scanning
 sentinel scan docker-compose.yml --fail-on high   # exit 1 if any High/Critical (CI gate)
+sentinel scan docker-compose.yml --strict         # + best-practice hardening checks
 sentinel verify report.json docker-compose.yml    # re-check a saved report reproduces
 ```
 
