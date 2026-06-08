@@ -8,8 +8,8 @@ and more.
 - **Deterministic** — same input always produces the same findings and the same
   `report_digest` (a real SHA-256 over the normalized facts + engine/pack versions +
   verdict). No LLM, no flakiness, fully auditable.
-- **Private by design** — runs locally, in your CI, or entirely in your browser
-  (WASM). Your compose file is never uploaded anywhere.
+- **Private by design** — runs locally and in your CI. Your compose file is never
+  uploaded anywhere; the tool makes no network calls.
 - **CI-ready** — one exit code gates your pipeline; the same binary runs on your laptop.
 
 > ⚠️ **Early preview — actively developed.** Today Sentinel scans **Docker Compose**.
@@ -87,14 +87,6 @@ predicates over that graph; the report is hashed so it can be reproduced and ver
 cargo build --release
 cargo test --workspace
 cargo run -p harness        # eval harness: precision/recall over a labeled corpus
-```
-
-## Web demo
-
-```sh
-cargo install wasm-pack
-wasm-pack build crates/web --target web --out-dir site/pkg --release
-python -m http.server 8849 --directory crates/web/site   # http://localhost:8849
 ```
 
 ## License
