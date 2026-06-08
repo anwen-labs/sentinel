@@ -1,0 +1,10 @@
+# Hardened Compose file — should produce no Critical/High findings.
+services:
+  web:
+    image: nginx@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    user: "10001"
+    read_only: true
+    ports:
+      - "127.0.0.1:8080:80"
+    environment:
+      DB_PASSWORD: ${DB_PASSWORD}

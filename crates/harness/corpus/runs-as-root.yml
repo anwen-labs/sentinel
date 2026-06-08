@@ -1,0 +1,6 @@
+# EXPECT: Low CONTAINER-RUNS-AS-ROOT-OR-UNKNOWN
+services:
+  app:
+    image: nginx@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    user: root
+    read_only: true

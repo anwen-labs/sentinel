@@ -1,0 +1,21 @@
+# Intentionally insecure Compose file — eval fixture for sentinel-core.
+services:
+  web:
+    image: nginx:latest
+    ports:
+      - "8080:80"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    environment:
+      DB_PASSWORD: admin
+    privileged: true
+    cap_add:
+      - SYS_ADMIN
+
+  db:
+    image: postgres:15
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_PASSWORD: password
+    network_mode: host

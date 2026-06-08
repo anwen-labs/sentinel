@@ -1,0 +1,6 @@
+# EXPECT: Low IMAGE-UNPINNED
+services:
+  app:
+    image: nginx:1.25
+    user: "10001"
+    read_only: true

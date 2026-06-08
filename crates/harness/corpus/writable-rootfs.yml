@@ -1,0 +1,5 @@
+# EXPECT: Low WRITABLE-ROOT-FILESYSTEM
+services:
+  app:
+    image: nginx@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    user: "10001"

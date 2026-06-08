@@ -1,0 +1,11 @@
+# Sensitive port exposed via Compose long-syntax — now supported by the parser.
+# EXPECT: Medium SENSITIVE-PORT-PUBLISHED-ALL-IFACES
+services:
+  app:
+    image: nginx@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    user: "10001"
+    read_only: true
+    ports:
+      - target: 5432
+        published: 5432
+        protocol: tcp

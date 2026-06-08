@@ -1,0 +1,35 @@
+# Multi-finding fixture (two services). Full ground-truth label set.
+# EXPECT: Critical DOCKER-SOCKET-MOUNT
+# EXPECT: Critical PRIVILEGED-CONTAINER
+# EXPECT: High DANGEROUS-CAPABILITY
+# EXPECT: High HOST-NETWORK-MODE
+# EXPECT: High WEAK-DEFAULT-CREDENTIAL
+# EXPECT: High WEAK-DEFAULT-CREDENTIAL
+# EXPECT: Medium SENSITIVE-PORT-PUBLISHED-ALL-IFACES
+# EXPECT: Low CONTAINER-RUNS-AS-ROOT-OR-UNKNOWN
+# EXPECT: Low CONTAINER-RUNS-AS-ROOT-OR-UNKNOWN
+# EXPECT: Low IMAGE-UNPINNED
+# EXPECT: Low IMAGE-UNPINNED
+# EXPECT: Low PORT-PUBLISHED-ALL-IFACES
+# EXPECT: Low WRITABLE-ROOT-FILESYSTEM
+# EXPECT: Low WRITABLE-ROOT-FILESYSTEM
+services:
+  web:
+    image: nginx:latest
+    ports:
+      - "8080:80"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    environment:
+      DB_PASSWORD: admin
+    privileged: true
+    cap_add:
+      - SYS_ADMIN
+
+  db:
+    image: postgres:15
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_PASSWORD: password
+    network_mode: host

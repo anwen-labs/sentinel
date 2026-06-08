@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sentinel — Docker Compose security scanner</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <header>
+    <h1>Sentinel</h1>
+    <p class="tagline">Deterministic Docker&nbsp;Compose security scanner.</p>
+    <p class="privacy">🔒 Runs entirely in your browser — your file never leaves this page.</p>
+  </header>
+
+  <main>
+    <section class="input">
+      <div class="toolbar">
+        <button id="load-insecure" class="ghost">Load insecure example</button>
+        <button id="load-secure" class="ghost">Load hardened example</button>
+        <button id="clear" class="ghost">Clear</button>
+      </div>
+      <textarea id="compose" spellcheck="false" placeholder="Paste your docker-compose.yml here…"></textarea>
+      <button id="scan" class="primary">Scan</button>
+    </section>
+
+    <section id="results" class="results" hidden>
+      <div id="verdict" class="verdict"></div>
+      <div id="findings"></div>
+      <div id="digest" class="digest"></div>
+    </section>
+  </main>
+
+  <footer>
+    <span>sentinel-core • engine v<span id="version">…</span></span>
+    <span>No telemetry. No upload. Open the network tab — nothing leaves.</span>
+  </footer>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

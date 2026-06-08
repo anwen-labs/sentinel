@@ -1,0 +1,7 @@
+# EXPECT: Critical PRIVILEGED-CONTAINER
+services:
+  app:
+    image: nginx@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    user: "10001"
+    read_only: true
+    privileged: true

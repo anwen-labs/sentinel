@@ -1,0 +1,66 @@
+﻿name: "Sentinel â€” Compose security scan"
+description: "Scan a Docker Compose file for security misconfigurations. Downloads a pinned, prebuilt sentinel binary and runs it (same binary you run locally)."
+branding:
+  icon: "shield"
+  color: "blue"
+
+inputs:
+  path:
+    description: "Path to the docker-compose file to scan (relative to the workspace)."
+    required: true
+  fail-on:
+    description: "Exit non-zero if any finding is at or above this severity: critical|high|medium|low|info. Empty to never fail."
+    required: false
+    default: "high"
+  format:
+    description: "Output format: text or json."
+    required: false
+    default: "text"
+  version:
+    description: "sentinel release version to use (without leading v), e.g. 0.1.0."
+    required: false
+    default: "0.1.0"
+
+runs:
+  using: composite
+  steps:
+    - name: Run sentinel scan
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        ver="${{ inputs.version }}"
+        repo="madrainbo/sentinel"
+
+        os="$(uname -s)"; arch="$(uname -m)"
+        case "$os" in
+          Linux)                 plat="unknown-linux-gnu"; ext="tar.gz"; bin="sentinel";;
+          Darwin)                plat="apple-darwin";      ext="tar.gz"; bin="sentinel";;
+          MINGW*|MSYS*|CYGWIN*)  plat="pc-windows-msvc";   ext="zip";    bin="sentinel.exe";;
+          *) echo "::error::unsupported OS: $os"; exit 1;;
+        esac
+        case "$arch" in
+          x86_64|amd64)  a="x86_64";;
+          arm64|aarch64) a="aarch64";;
+          *) echo "::error::unsupported arch: $arch"; exit 1;;
+        esac
+        target="${a}-${plat}"
+        asset="sentinel-v${ver}-${target}.${ext}"
+        url="https://github.com/${repo}/releases/download/v${ver}/${asset}"
+
+        echo "Downloading ${url}"
+        tmp="$(mktemp -d)"
+        curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -o "${tmp}/pkg.${ext}" "${url}"
+
+        # verify checksum if published
+        if curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -o "${tmp}/pkg.${ext}.sha256" "${url}.sha256"; then
+          ( cd "${tmp}" && echo "$(cut -d' ' -f1 pkg.${ext}.sha256)  pkg.${ext}" | sha256sum -c - )
+        fi
+
+        ( cd "${tmp}" && { [ "${ext}" = "zip" ] && unzip -q "pkg.${ext}" || tar xzf "pkg.${ext}"; } )
+        chmod +x "${tmp}/${bin}" || true
+
+        "${tmp}/${bin}" scan "${{ github.workspace }}/${{ inputs.path }}" \
+          --format "${{ inputs.format }}" \
+          ${{ inputs.fail-on != '' && format('--fail-on {0}', inputs.fail-on) || '' }}

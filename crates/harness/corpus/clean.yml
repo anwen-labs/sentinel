@@ -1,0 +1,9 @@
+# Fully hardened baseline — expect zero findings.
+# (no EXPECT lines = clean case)
+services:
+  app:
+    image: nginx@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    user: "10001"
+    read_only: true
+    environment:
+      DB_PASSWORD: ${DB_PASSWORD}

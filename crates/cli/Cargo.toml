@@ -1,0 +1,15 @@
+[package]
+name = "cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "sentinel"
+path = "src/main.rs"
+
+[dependencies]
+fact-model = { path = "../fact-model" }
+engine = { path = "../engine" }
+compose-parser = { path = "../compose-parser" }
+pack-sentinel-core = { path = "../pack-sentinel-core" }
+clap = { version = "4", features = ["derive"] }

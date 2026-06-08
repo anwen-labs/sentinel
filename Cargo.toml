@@ -1,0 +1,19 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/fact-model",
+    "crates/engine",
+    "crates/compose-parser",
+    "crates/pack-sentinel-core",
+    "crates/cli",
+    "crates/harness",
+    "crates/web",
+]
+
+# Sentinel engine workspace.
+# Architecture: docs/adr/0001-engine-architecture.md
+# Fact model:   docs/adr/0002-fact-model-schema.md
+# Report/digest: docs/adr/0003-report-format-and-content-addressing.md
+#
+# v0 skeleton is intentionally dependency-free so it builds offline and is
+# verifiable now. serde + canonical-JSON + hashing land in P1 (see TRACKER.md).
