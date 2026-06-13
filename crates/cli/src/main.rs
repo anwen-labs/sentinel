@@ -1,20 +1,22 @@
-//! `sentinel` — deterministic security scanner for Docker Compose and Dockerfiles.
+//! `sentinel` — deterministic security scanner for infrastructure configs
+//! (Docker Compose, Dockerfile, Kubernetes, GitHub Actions, Terraform, secrets).
 //!
-//!   sentinel scan docker-compose.yml
-//!   sentinel scan Dockerfile
+//!   sentinel scan docker-compose.yml          # a single file (type auto-detected)
+//!   sentinel scan ./my-repo                    # a whole directory (every config under it)
 //!   cat Dockerfile | sentinel scan - --type dockerfile
 //!   sentinel scan compose.yml --format sarif --fail-on high
 
 use std::io::Read;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use engine::{
-    detect_input, full_report_json, pack_version_hash, run_pack, sarif_json, InputKind, Pack,
-    ReportCore, Severity,
+    count_severities, detect_input, full_report_json, pack_version_hash, run_pack, sarif_json,
+    Finding, InputKind, Pack, ReportCore, Severity,
 };
-use fact_model::FactModel;
+use fact_model::{FactModel, Json};
 use pack_dockerfile_core::DockerfileCorePack;
 use pack_gha_core::GhaCorePack;
 use pack_k8s_core::K8sCorePack;
@@ -222,7 +224,27 @@ fn read_input(path: &str) -> Result<String, String> {
     }
 }
 
+/// Detect Go-template / Jinja templating (Helm charts, Kustomize-with-templates,
+/// Ansible) — not valid YAML/HCL as written, so the parser can't read it. GitHub
+/// Actions `${{ }}` expressions are deliberately excluded (the leading `$`).
+fn looks_templated(input: &str) -> bool {
+    let b = input.as_bytes();
+    let mut i = 0;
+    while i + 1 < b.len() {
+        if b[i] == b'{' && b[i + 1] == b'{' && (i == 0 || b[i - 1] != b'$') {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
+
 fn scan(args: ScanArgs) -> ExitCode {
+    // A directory path → whole-repo scan (every config file under it).
+    if args.path != "-" && std::path::Path::new(&args.path).is_dir() {
+        return scan_dir(args);
+    }
+
     let input = match read_input(&args.path) {
         Ok(s) => s,
         Err(e) => {
@@ -230,6 +252,17 @@ fn scan(args: ScanArgs) -> ExitCode {
             return ExitCode::from(2);
         }
     };
+
+    // Templated manifests can't be scanned as-is — fail clearly rather than
+    // emit a misleading parse error or a false-clean result.
+    if looks_templated(&input) {
+        eprintln!(
+            "error: {} looks like a templated manifest (Helm/Kustomize Go-template syntax). \
+             Render it first (e.g. `helm template . | sentinel scan -`) and scan the output.",
+            args.path
+        );
+        return ExitCode::from(2);
+    }
 
     let (model, pack) = match build_model_and_pack(&input, args.r#type, &args.path, args.strict) {
         Ok(mp) => mp,
@@ -277,6 +310,245 @@ fn scan(args: ScanArgs) -> ExitCode {
     if let Some(threshold) = args.fail_on {
         let threshold: Severity = threshold.into();
         if findings.iter().any(|f| f.severity >= threshold) {
+            return ExitCode::from(1);
+        }
+    }
+    ExitCode::SUCCESS
+}
+
+// Directories that never hold first-party config worth scanning.
+const IGNORE_DIRS: &[&str] = &[
+    ".git", "node_modules", "target", "vendor", "dist", "build", ".terraform", ".next",
+    ".venv", "venv", "__pycache__", ".idea", ".vscode", ".mypy_cache",
+];
+
+/// Does this filename look like a config Sentinel can scan? (Type is still
+/// auto-detected per file; this is just the walk filter.)
+fn is_scannable_candidate(path: &Path) -> bool {
+    let name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if name == "dockerfile" || name.ends_with(".dockerfile") || name.starts_with("dockerfile.") {
+        return true;
+    }
+    if name == ".env" || name.starts_with(".env.") {
+        return true;
+    }
+    matches!(
+        path.extension().and_then(|s| s.to_str()).map(|s| s.to_ascii_lowercase()).as_deref(),
+        Some("tf") | Some("yml") | Some("yaml") | Some("env")
+    )
+}
+
+/// Depth-first, deterministic collection of candidate files under `root`,
+/// skipping vendored/build dirs and hidden dirs (except `.github`).
+fn collect_candidates(root: &Path, out: &mut Vec<PathBuf>) {
+    let rd = match std::fs::read_dir(root) {
+        Ok(rd) => rd,
+        Err(_) => return,
+    };
+    let (mut dirs, mut files) = (Vec::new(), Vec::new());
+    for entry in rd.flatten() {
+        let p = entry.path();
+        if p.is_dir() {
+            let dn = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            if IGNORE_DIRS.contains(&dn) || (dn.starts_with('.') && dn != ".github") {
+                continue;
+            }
+            dirs.push(p);
+        } else if p.is_file() && is_scannable_candidate(&p) {
+            files.push(p);
+        }
+    }
+    files.sort();
+    dirs.sort();
+    out.extend(files);
+    for d in dirs {
+        collect_candidates(&d, out);
+    }
+}
+
+struct FileResult {
+    rel: String,
+    kind: String,
+    findings: Vec<Finding>,
+    status: String,
+    digest: String,
+    report: Json,
+}
+
+/// Whole-repo scan: walk a directory, scan every config file, aggregate.
+/// Type is auto-detected per file (an explicit `--type` is ignored for dirs,
+/// since a tree holds mixed formats).
+fn scan_dir(args: ScanArgs) -> ExitCode {
+    if matches!(args.format, Format::Sarif) {
+        eprintln!(
+            "error: SARIF output isn't supported for directory scans yet; scan a single file \
+             for SARIF, or use --format json for the whole tree."
+        );
+        return ExitCode::from(2);
+    }
+    let root = Path::new(&args.path);
+    let mut candidates = Vec::new();
+    collect_candidates(root, &mut candidates);
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    let mut results: Vec<FileResult> = Vec::new();
+    let mut skipped: Vec<(String, String)> = Vec::new();
+
+    for path in &candidates {
+        let rel = path
+            .strip_prefix(root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        let input = match std::fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(e) => {
+                skipped.push((rel, format!("unreadable: {e}")));
+                continue;
+            }
+        };
+        if looks_templated(&input) {
+            skipped.push((rel, "templated (Helm/Kustomize) — render before scanning".into()));
+            continue;
+        }
+        match build_model_and_pack(&input, InputType::Auto, &path.to_string_lossy(), args.strict) {
+            Ok((model, pack)) => {
+                // Skip files that parsed to nothing (e.g. a non-config YAML) so
+                // the report only lists real, assessed targets.
+                if model.entities.is_empty() {
+                    continue;
+                }
+                let mut findings = run_pack(pack.as_ref(), &model);
+                engine::attach_lines(&mut findings, &model);
+                let verdict = pack.verdict(&findings);
+                let core = ReportCore {
+                    model: &model,
+                    pack_id: pack.id().to_string(),
+                    pack_version_hash: pack_version_hash(pack.as_ref()),
+                    findings: &findings,
+                    verdict: &verdict,
+                };
+                let digest = core.report_digest();
+                let report_id =
+                    format!("rpt_{}", digest.trim_start_matches("sha256:").get(..12).unwrap_or(""));
+                let report = full_report_json(&core, &report_id, now);
+                let status = verdict.status.as_str().to_string();
+                results.push(FileResult { rel, kind: model.source.kind.clone(), findings, status, digest, report });
+            }
+            Err(e) => skipped.push((rel, e)),
+        }
+    }
+
+    let all: Vec<&Finding> = results.iter().flat_map(|r| r.findings.iter()).collect();
+    let owned: Vec<Finding> = all.into_iter().cloned().collect();
+    let counts = count_severities(&owned);
+    let flagged = counts.critical > 0 || counts.high > 0;
+    let status = if flagged { "FLAGGED_GAP" } else { "CLEARED" };
+
+    if matches!(args.format, Format::Json) {
+        let files: Vec<Json> = results
+            .iter()
+            .map(|r| {
+                Json::Obj(vec![
+                    ("path".into(), Json::Str(r.rel.clone())),
+                    ("kind".into(), Json::Str(r.kind.clone())),
+                    ("report".into(), r.report.clone()),
+                ])
+            })
+            .collect();
+        let skipped_json: Vec<Json> = skipped
+            .iter()
+            .map(|(p, reason)| {
+                Json::Obj(vec![
+                    ("path".into(), Json::Str(p.clone())),
+                    ("reason".into(), Json::Str(reason.clone())),
+                ])
+            })
+            .collect();
+        let out = Json::Obj(vec![
+            ("schema_version".into(), Json::Str("0".into())),
+            ("root".into(), Json::Str(args.path.clone())),
+            ("files".into(), Json::Arr(files)),
+            ("skipped".into(), Json::Arr(skipped_json)),
+            (
+                "summary".into(),
+                Json::Obj(vec![
+                    ("files_scanned".into(), Json::Int(results.len() as i64)),
+                    ("files_skipped".into(), Json::Int(skipped.len() as i64)),
+                    ("status".into(), Json::Str(status.to_lowercase())),
+                    (
+                        "counts".into(),
+                        Json::Obj(vec![
+                            ("critical".into(), Json::Int(counts.critical as i64)),
+                            ("high".into(), Json::Int(counts.high as i64)),
+                            ("medium".into(), Json::Int(counts.medium as i64)),
+                            ("low".into(), Json::Int(counts.low as i64)),
+                            ("info".into(), Json::Int(counts.info as i64)),
+                        ]),
+                    ),
+                ]),
+            ),
+        ]);
+        println!("{}", out.to_canonical_string());
+    } else {
+        println!("sentinel {} — repo scan: {}", env!("CARGO_PKG_VERSION"), args.path);
+        let with = results.iter().filter(|r| !r.findings.is_empty()).count();
+        println!(
+            "scanned {} file(s), {} with findings, {} skipped\n",
+            results.len(),
+            with,
+            skipped.len()
+        );
+        for r in &results {
+            if r.findings.is_empty() {
+                continue;
+            }
+            println!("── {} ({}) — {} ──", r.rel, r.kind, r.status);
+            for f in &r.findings {
+                let loc = match f.lines.as_slice() {
+                    [] => String::new(),
+                    [l] => format!("  (line {l})"),
+                    ls => format!(
+                        "  (lines {})",
+                        ls.iter().map(|l| l.to_string()).collect::<Vec<_>>().join(", ")
+                    ),
+                };
+                println!("  [{:<8}] {:<34} {}{loc}", f.severity.as_str(), f.rule_id, f.message);
+            }
+            println!();
+        }
+        let clean: Vec<&str> = results
+            .iter()
+            .filter(|r| r.findings.is_empty())
+            .map(|r| r.rel.as_str())
+            .collect();
+        if !clean.is_empty() {
+            println!("clean: {}\n", clean.join(", "));
+        }
+        if !skipped.is_empty() {
+            println!("skipped:");
+            for (p, reason) in &skipped {
+                println!("  {p} — {reason}");
+            }
+            println!();
+        }
+        println!(
+            "verdict: {}  (C:{} H:{} M:{} L:{} I:{})  across {} file(s)",
+            status, counts.critical, counts.high, counts.medium, counts.low, counts.info, results.len()
+        );
+    }
+
+    if let Some(threshold) = args.fail_on {
+        let threshold: Severity = threshold.into();
+        if owned.iter().any(|f| f.severity >= threshold) {
             return ExitCode::from(1);
         }
     }
@@ -399,5 +671,29 @@ fn verify(args: VerifyArgs) -> ExitCode {
         eprintln!("  recomputed: {recomputed}");
         eprintln!("(digests differ if the compose file, engine version, or pack changed)");
         ExitCode::from(1)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn templated_detection_excludes_github_actions_expressions() {
+        assert!(looks_templated("name: {{ .Values.x }}")); // Helm
+        assert!(looks_templated("a: {{x}}")); // Jinja/Go
+        assert!(!looks_templated("run: echo ${{ github.sha }}")); // GHA — allowed
+        assert!(!looks_templated("image: nginx:1.25")); // plain
+        assert!(!looks_templated("x: ${var}")); // TF-style interpolation
+    }
+
+    #[test]
+    fn scannable_candidates_by_name_and_extension() {
+        for n in ["Dockerfile", "api.dockerfile", "main.tf", "compose.yml", "deploy.yaml", ".env", ".env.prod"] {
+            assert!(is_scannable_candidate(Path::new(n)), "should scan {n}");
+        }
+        for n in ["README.md", "main.rs", "data.json", "notes.txt", "image.png"] {
+            assert!(!is_scannable_candidate(Path::new(n)), "should skip {n}");
+        }
     }
 }

@@ -35,7 +35,7 @@ hardcoded keys, and more.
 **70 rules total** (64 default + 6 opt-in `--strict` hardening checks). Full
 per-rule reference — what each finds, why it matters, how to fix it — in
 **[RULES.md](RULES.md)** (generated from the engine itself; findings and SARIF
-deep-link into it). Control mappings (CWE, CIS): **[CONTROLS.md](CONTROLS.md)**.
+deep-link into it). Control mappings (CWE, CIS, MITRE ATT&CK): **[CONTROLS.md](CONTROLS.md)**.
 
 ## Scope — one layer, not your whole security program
 
@@ -45,7 +45,7 @@ everything. Pair it with the tools below for defense in depth.
 
 **Sentinel catches:** misconfigurations across the six formats above (70 rules) —
 container escape, exposed services, default/leaked credentials, over-broad permissions,
-supply-chain gaps — with source-line references, CWE/CIS mappings, and a reproducible
+supply-chain gaps — with source-line references, CWE / CIS / MITRE ATT&CK mappings, and a reproducible
 digest.
 
 **Sentinel does _not_ (use it alongside):**
@@ -54,7 +54,7 @@ digest.
 - Source-code vulnerabilities (**SAST**) → CodeQL, Semgrep
 - Secrets in **git history** — it scans the file you give it, not your commits → gitleaks, trufflehog
 - **Runtime** threats → Falco, your EDR
-- _Today:_ one file per invocation; Helm / templated YAML isn't rendered yet (whole-repo and Helm are on the roadmap)
+- Helm / Kustomize **templates** aren't *rendered* — they're detected and skipped, so render first (`helm template`) then scan
 
 ## Install
 
@@ -64,10 +64,10 @@ from [Releases](https://github.com/madrainbo/sentinel/releases/latest)
 `.sha256`, and put `sentinel` on your `PATH`:
 
 ```sh
-curl -fsSLO https://github.com/madrainbo/sentinel/releases/download/v0.1.1/sentinel-v0.1.1-x86_64-unknown-linux-gnu.tar.gz
-curl -fsSLO https://github.com/madrainbo/sentinel/releases/download/v0.1.1/sentinel-v0.1.1-x86_64-unknown-linux-gnu.sha256
-sha256sum -c <(awk '{print $1"  sentinel-v0.1.1-x86_64-unknown-linux-gnu.tar.gz"}' sentinel-v0.1.1-x86_64-unknown-linux-gnu.sha256)
-tar xzf sentinel-v0.1.1-x86_64-unknown-linux-gnu.tar.gz && sudo mv sentinel /usr/local/bin/
+curl -fsSLO https://github.com/madrainbo/sentinel/releases/download/v0.1.2/sentinel-v0.1.2-x86_64-unknown-linux-gnu.tar.gz
+curl -fsSLO https://github.com/madrainbo/sentinel/releases/download/v0.1.2/sentinel-v0.1.2-x86_64-unknown-linux-gnu.sha256
+sha256sum -c <(awk '{print $1"  sentinel-v0.1.2-x86_64-unknown-linux-gnu.tar.gz"}' sentinel-v0.1.2-x86_64-unknown-linux-gnu.sha256)
+tar xzf sentinel-v0.1.2-x86_64-unknown-linux-gnu.tar.gz && sudo mv sentinel /usr/local/bin/
 ```
 
 **From source** (requires the [Rust toolchain](https://rustup.rs) and Git):
@@ -113,7 +113,7 @@ sentinel rules                                    # the full rule catalog as Mar
 One line gates your pipeline:
 
 ```yaml
-- uses: madrainbo/sentinel@v0.1.1
+- uses: madrainbo/sentinel@v0.1.2
   with:
     path: docker-compose.yml
     fail-on: high      # fail the job on any High/Critical finding

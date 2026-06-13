@@ -64,6 +64,31 @@ workflow risks, Terraform/IaC misconfigurations, or leaked-credential detection,
 mapping is the honest, framework-neutral classification. The full per-rule CWE list is in
 [RULES.md](RULES.md), which is generated from the engine's own catalog.
 
+## MITRE ATT&CK technique mappings
+
+Each rule that maps to an adversary behaviour carries a `ATTACK-T####` control (in
+findings, SARIF, the report, and [RULES.md](RULES.md)) alongside its CWE/CIS mappings.
+Techniques are from **MITRE ATT&CK Enterprise** (the Containers matrix techniques were
+confirmed live against attack.mitre.org). 62 of 70 rules are mapped; the 8 pure-hardening
+rules (non-root user, read-only rootfs, cap-drop-all, sudo-in-build, encryption-at-rest)
+are deliberately left unmapped rather than forced onto an ill-fitting technique.
+
+| Technique | Name | Rules mapped (clusters) |
+|---|---|---|
+| **T1611** | Escape to Host | docker-socket, privileged, cap-add-all, dangerous-cap, host net/pid/ipc/userns namespaces, sensitive host-path / hostPath, host-takeover & node-compromise chains (Compose + K8s) |
+| **T1552.001** | Unsecured Credentials: Credentials In Files | secret-in-env, all `SECRET-*` detectors, Dockerfile build secret, K8s secret-in-manifest, TF plaintext secret, K8s automount SA token |
+| **T1552** | Unsecured Credentials (parent) | GHA `secrets: inherit`, K8s broad Secret read |
+| **T1195.002** | Compromise Software Supply Chain | unpinned images/base images/actions, `curl \| sh`, remote `ADD`, disabled TLS verify, GHA pwn-request / broad-permissions / self-hosted runner |
+| **T1190** | Exploit Public-Facing Application | ports on 0.0.0.0 (sensitive + any), open security group, public resource principal |
+| **T1078 / T1078.001** | Valid Accounts / Default Accounts | DB auth disabled (T1078); weak/default & reachable-weak credentials (T1078.001) |
+| **T1098** | Account Manipulation | cluster-admin binding, wildcard RBAC, IAM wildcard action |
+| **T1562.001** | Impair Defenses: Disable or Modify Tools | seccomp/AppArmor unconfined (Compose + K8s) |
+| **T1548** | Abuse Elevation Control Mechanism | allowPrivilegeEscalation, no-new-privileges missing |
+| **T1059** | Command and Scripting Interpreter | GHA script injection |
+| **T1530** | Data from Cloud Storage | public S3 bucket ACL |
+| **T1222** | File and Directory Permissions Modification | Dockerfile world-writable (chmod 777) |
+| **T1499** | Endpoint Denial of Service | no memory/resource limit |
+
 ## Verification status
 
 - **CWE mappings: verified** against MITRE CWE across all six packs. The newer packs'
@@ -81,3 +106,10 @@ mapping is the honest, framework-neutral classification. The full per-rule CWE l
   cross-check against your licensed CIS Docker Benchmark copy for the exact target version.
 - **CIS Kubernetes Benchmark v1.10** (k8s pack): **verified** against kube-bench `cis-1.10`;
   corrected a prior off-by-one in the 5.2.x range.
+- **MITRE ATT&CK (Enterprise): verified** — the container-domain techniques (T1611 Escape
+  to Host, T1610 Deploy Container, T1612 Build Image on Host, T1613 Container/Resource
+  Discovery, T1552.001 Credentials In Files, T1552.007 Container API) were confirmed live
+  against the ATT&CK Containers matrix on 2026-06-10; the cross-domain techniques used
+  (T1078/.001, T1098, T1190, T1195.002, T1499, T1530, T1548, T1552, T1059, T1222,
+  T1562.001) are current Enterprise techniques. Mapping is one technique per rule (the
+  primary adversary behaviour); rules with no honest technique fit are left unmapped.

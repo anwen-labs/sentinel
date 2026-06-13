@@ -184,13 +184,13 @@ pub fn catalog() -> Vec<engine::RuleMeta> {
     use engine::Severity::{High, Low, Medium};
     let t = "Dockerfile";
     vec![
-        RuleMeta { id: "DOCKERFILE-CURL-PIPE-EXECUTION", title: "Pipe-to-shell in RUN", target: t, severity: High, controls: &["CWE-494"], summary: "A RUN pipes a downloaded script straight into a shell (curl | sh) with no integrity check.", fix: "Download to a file, verify a checksum/signature, then execute.", strict: false },
-        RuleMeta { id: "DOCKERFILE-TLS-VERIFICATION-DISABLED", title: "TLS verification disabled", target: t, severity: High, controls: &["CWE-295"], summary: "A RUN downloads with curl -k / wget --no-check-certificate, disabling TLS certificate verification — the payload can be swapped in transit.", fix: "Remove the insecure flag; fix CA trust and verify a checksum/signature of the download.", strict: false },
-        RuleMeta { id: "DOCKERFILE-WORLD-WRITABLE", title: "World-writable files", target: t, severity: Medium, controls: &["CWE-732", "CWE-276"], summary: "A RUN sets world-writable permissions (chmod 777 / a+w) — any process or user in the container can overwrite the files.", fix: "Grant the narrowest permissions needed (755 / 644); avoid 777.", strict: false },
+        RuleMeta { id: "DOCKERFILE-CURL-PIPE-EXECUTION", title: "Pipe-to-shell in RUN", target: t, severity: High, controls: &["CWE-494", "ATTACK-T1195.002"], summary: "A RUN pipes a downloaded script straight into a shell (curl | sh) with no integrity check.", fix: "Download to a file, verify a checksum/signature, then execute.", strict: false },
+        RuleMeta { id: "DOCKERFILE-TLS-VERIFICATION-DISABLED", title: "TLS verification disabled", target: t, severity: High, controls: &["CWE-295", "ATTACK-T1195.002"], summary: "A RUN downloads with curl -k / wget --no-check-certificate, disabling TLS certificate verification — the payload can be swapped in transit.", fix: "Remove the insecure flag; fix CA trust and verify a checksum/signature of the download.", strict: false },
+        RuleMeta { id: "DOCKERFILE-WORLD-WRITABLE", title: "World-writable files", target: t, severity: Medium, controls: &["CWE-732", "CWE-276", "ATTACK-T1222"], summary: "A RUN sets world-writable permissions (chmod 777 / a+w) — any process or user in the container can overwrite the files.", fix: "Grant the narrowest permissions needed (755 / 644); avoid 777.", strict: false },
         RuleMeta { id: "DOCKERFILE-ROOT-USER", title: "Runs as root", target: t, severity: Medium, controls: &["CWE-250", "CIS-Docker-4.1"], summary: "The image sets USER root or never sets a USER, so it defaults to root.", fix: "Add a non-root USER instruction (and create the user) before the entrypoint.", strict: false },
-        RuleMeta { id: "DOCKERFILE-ADD-REMOTE-URL", title: "ADD fetches a remote URL", target: t, severity: Medium, controls: &["CWE-494"], summary: "ADD fetches a remote URL with no integrity check (and auto-extracts archives).", fix: "Use COPY for local files, or RUN curl with a checksum verification step.", strict: false },
-        RuleMeta { id: "DOCKERFILE-BUILD-SECRET", title: "Secret baked into the image", target: t, severity: Medium, controls: &["CWE-798"], summary: "A secret-like ENV/ARG has an inline value — it is baked into image layers.", fix: "Use BuildKit secrets (RUN --mount=type=secret) or runtime env, not ENV/ARG.", strict: false },
-        RuleMeta { id: "DOCKERFILE-BASE-IMAGE-UNPINNED", title: "Base image not pinned", target: t, severity: Low, controls: &["CWE-494", "CWE-1357"], summary: "The base image is not pinned by digest — the build is not reproducible.", fix: "Pin the base image by digest: FROM repo@sha256:…", strict: false },
+        RuleMeta { id: "DOCKERFILE-ADD-REMOTE-URL", title: "ADD fetches a remote URL", target: t, severity: Medium, controls: &["CWE-494", "ATTACK-T1195.002"], summary: "ADD fetches a remote URL with no integrity check (and auto-extracts archives).", fix: "Use COPY for local files, or RUN curl with a checksum verification step.", strict: false },
+        RuleMeta { id: "DOCKERFILE-BUILD-SECRET", title: "Secret baked into the image", target: t, severity: Medium, controls: &["CWE-798", "ATTACK-T1552.001"], summary: "A secret-like ENV/ARG has an inline value — it is baked into image layers.", fix: "Use BuildKit secrets (RUN --mount=type=secret) or runtime env, not ENV/ARG.", strict: false },
+        RuleMeta { id: "DOCKERFILE-BASE-IMAGE-UNPINNED", title: "Base image not pinned", target: t, severity: Low, controls: &["CWE-494", "CWE-1357", "ATTACK-T1195.002"], summary: "The base image is not pinned by digest — the build is not reproducible.", fix: "Pin the base image by digest: FROM repo@sha256:…", strict: false },
         RuleMeta { id: "DOCKERFILE-SUDO", title: "sudo used in build", target: t, severity: Low, controls: &["CWE-250"], summary: "A RUN uses sudo — unnecessary in a build and can mask privilege issues.", fix: "Run build steps as the appropriate user directly; drop sudo.", strict: false },
     ]
 }
@@ -222,6 +222,9 @@ impl Default for DockerfileCorePack {
 }
 
 impl Pack for DockerfileCorePack {
+    fn catalog(&self) -> Vec<engine::RuleMeta> {
+        catalog()
+    }
     fn id(&self) -> &str {
         PACK_ID
     }

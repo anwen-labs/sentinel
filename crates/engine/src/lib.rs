@@ -205,6 +205,11 @@ pub trait Pack {
     fn id(&self) -> &str;
     fn rules(&self) -> &[Box<dyn Rule>];
     fn verdict(&self, findings: &[Finding]) -> Verdict;
+    /// The pack's rule catalog (id → metadata incl. control mappings). This is
+    /// the single source of truth for a rule's `controls`; [`run_pack`] copies
+    /// them onto each emitted finding so the mapping is defined in exactly one
+    /// place (and flows into findings, SARIF, the report, RULES.md, and the UI).
+    fn catalog(&self) -> Vec<RuleMeta>;
 }
 
 /// Run every rule and return findings in canonical order
@@ -215,6 +220,14 @@ pub fn run_pack(pack: &dyn Pack, model: &FactModel) -> Vec<Finding> {
         .iter()
         .flat_map(|r| r.evaluate(model))
         .collect();
+    // Controls are authored once, in the catalog; stamp them onto findings by
+    // rule id so a finding can never drift from the documented mapping.
+    let catalog = pack.catalog();
+    for f in &mut findings {
+        if let Some(meta) = catalog.iter().find(|m| m.id == f.rule_id) {
+            f.controls = meta.controls.iter().map(|c| c.to_string()).collect();
+        }
+    }
     findings.sort_by(|a, b| {
         b.severity
             .cmp(&a.severity)

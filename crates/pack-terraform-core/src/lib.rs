@@ -154,11 +154,11 @@ pub fn catalog() -> Vec<engine::RuleMeta> {
     use engine::Severity::{High, Medium};
     let t = "Terraform";
     vec![
-        RuleMeta { id: "TF-OPEN-SECURITY-GROUP", title: "Security group open to 0.0.0.0/0", target: t, severity: High, controls: &["CWE-284", "CWE-668"], summary: "An aws_security_group ingress rule allows 0.0.0.0/0 — open to the entire internet (critical for admin ports / datastores).", fix: "Restrict cidr_blocks to known networks; never expose 22/3389 or databases to 0.0.0.0/0.", strict: false },
-        RuleMeta { id: "TF-PUBLIC-S3-BUCKET", title: "Public S3 bucket ACL", target: t, severity: High, controls: &["CWE-732", "CWE-284"], summary: "An S3 bucket ACL is public-read / public-read-write / authenticated-read — objects are world-readable.", fix: "Keep buckets private; use a public access block and presigned URLs / CloudFront.", strict: false },
-        RuleMeta { id: "TF-IAM-WILDCARD-ACTION", title: "IAM policy allows Action *", target: t, severity: High, controls: &["CWE-269", "CWE-250"], summary: "An IAM policy statement allows Action \"*\" with Effect Allow — full admin to whoever holds it.", fix: "Scope to the specific actions required; avoid Action \"*\".", strict: false },
-        RuleMeta { id: "TF-IAM-PUBLIC-PRINCIPAL", title: "Resource policy Principal *", target: t, severity: High, controls: &["CWE-284", "CWE-732"], summary: "A resource policy allows Principal \"*\" with Allow — any AWS account / anonymous caller gets access.", fix: "Use explicit least-privilege Principal ARNs.", strict: false },
-        RuleMeta { id: "TF-PLAINTEXT-SECRET", title: "Hardcoded secret in HCL", target: t, severity: High, controls: &["CWE-798", "CWE-312"], summary: "A credential attribute (password/secret_key/token/…) is set to a literal string — committed to VCS and Terraform state.", fix: "Use variables from a secret store / TF_VAR_ env; mark sensitive; rotate the exposed value.", strict: false },
+        RuleMeta { id: "TF-OPEN-SECURITY-GROUP", title: "Security group open to 0.0.0.0/0", target: t, severity: High, controls: &["CWE-284", "CWE-668", "ATTACK-T1190"], summary: "An aws_security_group ingress rule allows 0.0.0.0/0 — open to the entire internet (critical for admin ports / datastores).", fix: "Restrict cidr_blocks to known networks; never expose 22/3389 or databases to 0.0.0.0/0.", strict: false },
+        RuleMeta { id: "TF-PUBLIC-S3-BUCKET", title: "Public S3 bucket ACL", target: t, severity: High, controls: &["CWE-732", "CWE-284", "ATTACK-T1530"], summary: "An S3 bucket ACL is public-read / public-read-write / authenticated-read — objects are world-readable.", fix: "Keep buckets private; use a public access block and presigned URLs / CloudFront.", strict: false },
+        RuleMeta { id: "TF-IAM-WILDCARD-ACTION", title: "IAM policy allows Action *", target: t, severity: High, controls: &["CWE-269", "CWE-250", "ATTACK-T1098"], summary: "An IAM policy statement allows Action \"*\" with Effect Allow — full admin to whoever holds it.", fix: "Scope to the specific actions required; avoid Action \"*\".", strict: false },
+        RuleMeta { id: "TF-IAM-PUBLIC-PRINCIPAL", title: "Resource policy Principal *", target: t, severity: High, controls: &["CWE-284", "CWE-732", "ATTACK-T1190"], summary: "A resource policy allows Principal \"*\" with Allow — any AWS account / anonymous caller gets access.", fix: "Use explicit least-privilege Principal ARNs.", strict: false },
+        RuleMeta { id: "TF-PLAINTEXT-SECRET", title: "Hardcoded secret in HCL", target: t, severity: High, controls: &["CWE-798", "CWE-312", "ATTACK-T1552.001"], summary: "A credential attribute (password/secret_key/token/…) is set to a literal string — committed to VCS and Terraform state.", fix: "Use variables from a secret store / TF_VAR_ env; mark sensitive; rotate the exposed value.", strict: false },
         RuleMeta { id: "TF-UNENCRYPTED-STORAGE", title: "Storage not encrypted at rest", target: t, severity: Medium, controls: &["CWE-311"], summary: "An EBS volume or RDS database does not enable encryption at rest.", fix: "Set encrypted = true / storage_encrypted = true, ideally with a customer-managed KMS key.", strict: false },
     ]
 }
@@ -188,6 +188,9 @@ impl Default for TerraformCorePack {
 }
 
 impl Pack for TerraformCorePack {
+    fn catalog(&self) -> Vec<engine::RuleMeta> {
+        catalog()
+    }
     fn id(&self) -> &str {
         PACK_ID
     }
