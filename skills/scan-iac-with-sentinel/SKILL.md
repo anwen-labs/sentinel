@@ -24,10 +24,10 @@ line-referenced, and reproducible.
 Check the binary is available; install if missing:
 
 ```sh
-sentinel --version || cargo install --git https://github.com/madrainbo/sentinel sentinel
+sentinel --version || cargo install --git https://github.com/anwen-labs/sentinel sentinel
 ```
 
-(Prebuilt binaries: https://github.com/madrainbo/sentinel/releases — pick the
+(Prebuilt binaries: https://github.com/anwen-labs/sentinel/releases — pick the
 archive for the platform, verify the .sha256, put `sentinel` on PATH.)
 
 ## Workflow
@@ -47,7 +47,7 @@ archive for the platform, verify the .sha256, put `sentinel` on PATH.)
 
 3. **Fix findings, highest severity first.** Edit the file at the indicated
    lines following each finding's `remediation`. Rule reference (why it matters,
-   good/bad examples): https://github.com/madrainbo/sentinel/blob/main/RULES.md#
+   good/bad examples): https://github.com/anwen-labs/sentinel/blob/main/RULES.md#
    + the lowercased rule id (e.g. `#docker-socket-mount`).
    - Do not suppress or delete functionality to silence a finding; change the
      configuration to the secure form. If a finding is intentional (rare),

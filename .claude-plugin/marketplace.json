@@ -1,7 +1,7 @@
 {
   "name": "sentinel",
   "owner": {
-    "name": "madrainbo"
+    "name": "anwen-labs"
   },
   "metadata": {
     "description": "Deterministic security scanner for infrastructure configs - Docker Compose, Dockerfile, Kubernetes, GitHub Actions, Terraform, secrets. 70 rules, reproducible verdicts, zero network calls.",
@@ -14,7 +14,7 @@
       "description": "Gives the agent a deterministic IaC security scanner: scan Compose/Dockerfile/K8s/GHA/Terraform/.env files, fix findings by source line, re-scan until CLEARED, and verify report digests. Same engine as the Sentinel CLI and web demo.",
       "version": "0.1.0",
       "author": {
-        "name": "madrainbo"
+        "name": "anwen-labs"
       },
       "license": "MIT",
       "keywords": [
@@ -32,7 +32,7 @@
       ],
       "category": "security",
       "homepage": "https://sentinel-engine-ggaj.onrender.com/",
-      "repository": "https://github.com/madrainbo/sentinel"
+      "repository": "https://github.com/anwen-labs/sentinel"
     }
   ]
 }

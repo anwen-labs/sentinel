@@ -605,7 +605,7 @@ fn print_text(
     );
     println!("digest:  {digest}");
     if !args.quiet && !findings.is_empty() {
-        println!("reference: https://github.com/madrainbo/sentinel/blob/main/RULES.md");
+        println!("reference: https://github.com/anwen-labs/sentinel/blob/main/RULES.md");
     }
 }
 

@@ -59,13 +59,13 @@ digest.
 ## Install
 
 **Prebuilt binary** (no toolchain needed) — download the archive for your platform
-from [Releases](https://github.com/madrainbo/sentinel/releases/latest)
+from [Releases](https://github.com/anwen-labs/sentinel/releases/latest)
 (Linux x86_64/aarch64 · macOS x86_64/aarch64 · Windows x86_64), check the
 `.sha256`, and put `sentinel` on your `PATH`:
 
 ```sh
-curl -fsSLO https://github.com/madrainbo/sentinel/releases/download/v0.1.2/sentinel-v0.1.2-x86_64-unknown-linux-gnu.tar.gz
-curl -fsSLO https://github.com/madrainbo/sentinel/releases/download/v0.1.2/sentinel-v0.1.2-x86_64-unknown-linux-gnu.sha256
+curl -fsSLO https://github.com/anwen-labs/sentinel/releases/download/v0.1.2/sentinel-v0.1.2-x86_64-unknown-linux-gnu.tar.gz
+curl -fsSLO https://github.com/anwen-labs/sentinel/releases/download/v0.1.2/sentinel-v0.1.2-x86_64-unknown-linux-gnu.sha256
 sha256sum -c <(awk '{print $1"  sentinel-v0.1.2-x86_64-unknown-linux-gnu.tar.gz"}' sentinel-v0.1.2-x86_64-unknown-linux-gnu.sha256)
 tar xzf sentinel-v0.1.2-x86_64-unknown-linux-gnu.tar.gz && sudo mv sentinel /usr/local/bin/
 ```
@@ -73,7 +73,7 @@ tar xzf sentinel-v0.1.2-x86_64-unknown-linux-gnu.tar.gz && sudo mv sentinel /usr
 **From source** (requires the [Rust toolchain](https://rustup.rs) and Git):
 
 ```sh
-cargo install --git https://github.com/madrainbo/sentinel sentinel
+cargo install --git https://github.com/anwen-labs/sentinel sentinel
 # or, from a clone:
 cargo install --path crates/cli
 ```
@@ -113,7 +113,7 @@ sentinel rules                                    # the full rule catalog as Mar
 One line gates your pipeline:
 
 ```yaml
-- uses: madrainbo/sentinel@v0.1.2
+- uses: anwen-labs/sentinel@v0.1.2
   with:
     path: docker-compose.yml
     fail-on: high      # fail the job on any High/Critical finding
@@ -130,7 +130,7 @@ to scan IaC files with Sentinel, fix findings by source line, re-scan until
 model judgment:
 
 ```
-/plugin marketplace add madrainbo/sentinel
+/plugin marketplace add anwen-labs/sentinel
 /plugin install sentinel-scanner@sentinel
 ```
 

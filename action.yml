@@ -33,7 +33,7 @@ runs:
       run: |
         set -euo pipefail
         ver="${{ inputs.version }}"
-        repo="madrainbo/sentinel"
+        repo="anwen-labs/sentinel"
 
         os="$(uname -s)"; arch="$(uname -m)"
         case "$os" in

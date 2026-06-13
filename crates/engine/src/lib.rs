@@ -533,7 +533,7 @@ fn looks_like_kubernetes(content: &str) -> bool {
 
 pub fn rule_help_url(rule_id: &str) -> String {
     format!(
-        "https://github.com/madrainbo/sentinel/blob/main/RULES.md#{}",
+        "https://github.com/anwen-labs/sentinel/blob/main/RULES.md#{}",
         rule_id.to_lowercase()
     )
 }
@@ -671,7 +671,7 @@ pub fn sarif_json(findings: &[Finding], file_uri: &str) -> Json {
                             ("version".into(), Json::Str(ENGINE_VERSION.into())),
                             (
                                 "informationUri".into(),
-                                Json::Str("https://github.com/madrainbo/sentinel".into()),
+                                Json::Str("https://github.com/anwen-labs/sentinel".into()),
                             ),
                             ("rules".into(), Json::Arr(rules)),
                         ]),
