@@ -1,5 +1,5 @@
-﻿name: "Sentinel â€” security scan"
-description: "Scan Docker Compose, Dockerfile, Kubernetes, GitHub Actions, Terraform, or config files for security misconfigurations. Downloads a pinned, prebuilt sentinel binary and runs it (same binary you run locally)."
+﻿name: "Sentinel - security scan"
+description: "Deterministic security scanner for Docker Compose, Dockerfile, Kubernetes, GitHub Actions & Terraform configs."
 branding:
   icon: "shield"
   color: "blue"
