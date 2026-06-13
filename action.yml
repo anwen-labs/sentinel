@@ -1,4 +1,4 @@
-﻿name: "Sentinel - security scan"
+name: "Sentinel - security scan"
 description: "Deterministic security scanner for Docker Compose, Dockerfile, Kubernetes, GitHub Actions & Terraform configs."
 branding:
   icon: "shield"
@@ -17,9 +17,9 @@ inputs:
     required: false
     default: "text"
   version:
-    description: "sentinel release version to use (without leading v), e.g. 0.1.0."
+    description: "sentinel release version to use (without leading v), e.g. 0.1.1."
     required: false
-    default: "0.1.0"
+    default: "0.1.1"
 
 runs:
   using: composite

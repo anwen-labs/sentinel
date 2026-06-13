@@ -45,10 +45,10 @@ from [Releases](https://github.com/madrainbo/sentinel/releases/latest)
 `.sha256`, and put `sentinel` on your `PATH`:
 
 ```sh
-curl -fsSLO https://github.com/madrainbo/sentinel/releases/download/v0.1.0/sentinel-v0.1.0-x86_64-unknown-linux-gnu.tar.gz
-curl -fsSLO https://github.com/madrainbo/sentinel/releases/download/v0.1.0/sentinel-v0.1.0-x86_64-unknown-linux-gnu.sha256
-sha256sum -c <(awk '{print $1"  sentinel-v0.1.0-x86_64-unknown-linux-gnu.tar.gz"}' sentinel-v0.1.0-x86_64-unknown-linux-gnu.sha256)
-tar xzf sentinel-v0.1.0-x86_64-unknown-linux-gnu.tar.gz && sudo mv sentinel /usr/local/bin/
+curl -fsSLO https://github.com/madrainbo/sentinel/releases/download/v0.1.1/sentinel-v0.1.1-x86_64-unknown-linux-gnu.tar.gz
+curl -fsSLO https://github.com/madrainbo/sentinel/releases/download/v0.1.1/sentinel-v0.1.1-x86_64-unknown-linux-gnu.sha256
+sha256sum -c <(awk '{print $1"  sentinel-v0.1.1-x86_64-unknown-linux-gnu.tar.gz"}' sentinel-v0.1.1-x86_64-unknown-linux-gnu.sha256)
+tar xzf sentinel-v0.1.1-x86_64-unknown-linux-gnu.tar.gz && sudo mv sentinel /usr/local/bin/
 ```
 
 **From source** (requires the [Rust toolchain](https://rustup.rs) and Git):
@@ -94,7 +94,7 @@ sentinel rules                                    # the full rule catalog as Mar
 One line gates your pipeline:
 
 ```yaml
-- uses: madrainbo/sentinel@v0.1.0
+- uses: madrainbo/sentinel@v0.1.1
   with:
     path: docker-compose.yml
     fail-on: high      # fail the job on any High/Critical finding
