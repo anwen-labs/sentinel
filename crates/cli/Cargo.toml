@@ -1,7 +1,7 @@
 [package]
 license.workspace = true
 name = "cli"
-version = "0.1.0"
+version = "0.1.4"
 edition = "2021"
 
 [[bin]]
