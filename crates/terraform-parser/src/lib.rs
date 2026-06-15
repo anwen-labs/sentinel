@@ -60,6 +60,18 @@ pub fn parse(input: &str) -> FactModel {
     }
 }
 
+/// Like [`parse`], but rejects malformed input (e.g. an unterminated heredoc that
+/// would otherwise swallow following blocks and hide their misconfigurations). The
+/// CLI and WASM scanner use this so a crafted `.tf` can't fail open to a clean
+/// report — mirroring the K8s/Compose/GHA `try_parse` and real Terraform, which
+/// errors on an unterminated heredoc.
+pub fn try_parse(input: &str) -> Result<FactModel, String> {
+    if hcl::parse_document_checked(input).1 {
+        return Err("invalid Terraform: unterminated heredoc (no closing delimiter)".to_string());
+    }
+    Ok(parse(input))
+}
+
 fn owner_label(block: &Block) -> String {
     if block.labels.is_empty() {
         block.typ.clone()
@@ -353,6 +365,36 @@ mod tests {
         let fm = parse(src);
         let r = fm.entities.iter().find(|e| e.kind == EntityKind::Resource).unwrap();
         assert_eq!(r.attr("open_ingress").and_then(|v| v.as_bool()), Some(true));
+    }
+
+    #[test]
+    fn resource_after_unbalanced_bracket_is_still_parsed() {
+        // An unbalanced `(` used to swallow every following block; the open SG
+        // after it must still be parsed and flagged (fail-open fix).
+        let tf = "locals {\n  x = (\n}\nresource \"aws_security_group\" \"sg\" {\n  ingress {\n    cidr_blocks = [\"0.0.0.0/0\"]\n  }\n}\n";
+        let fm = parse(tf);
+        assert!(fm.entities.iter().any(|e| e.id == "resource:aws_security_group.sg"
+            && e.attr("open_ingress").and_then(|v| v.as_bool()) == Some(true)));
+    }
+
+    #[test]
+    fn resource_after_unterminated_string_is_still_parsed() {
+        // A dangling quote used to consume the rest of the file; the open SG after
+        // it must still be parsed and flagged.
+        let tf = "locals {\n  x = \"unterminated\n}\nresource \"aws_security_group\" \"sg\" {\n  ingress {\n    cidr_blocks = [\"0.0.0.0/0\"]\n  }\n}\n";
+        let fm = parse(tf);
+        assert!(fm.entities.iter().any(|e| e.id == "resource:aws_security_group.sg"
+            && e.attr("open_ingress").and_then(|v| v.as_bool()) == Some(true)));
+    }
+
+    #[test]
+    fn unterminated_heredoc_is_rejected() {
+        // try_parse rejects an unterminated heredoc (which would otherwise swallow
+        // the following blocks) instead of failing open; a closed heredoc is fine.
+        let bad = "resource \"aws_iam_policy\" \"p\" {\n  policy = <<EOT\n{ \"a\": 1 }\n}\nresource \"aws_security_group\" \"sg\" {\n  ingress { cidr_blocks = [\"0.0.0.0/0\"] }\n}\n";
+        assert!(try_parse(bad).is_err());
+        let ok = "resource \"aws_iam_policy\" \"p\" {\n  policy = <<EOT\n{ \"a\": 1 }\nEOT\n}\n";
+        assert!(try_parse(ok).is_ok());
     }
 
     #[test]

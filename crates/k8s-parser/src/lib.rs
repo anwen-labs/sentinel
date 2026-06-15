@@ -13,7 +13,7 @@
 //!   * Role / RoleBinding / ServiceAccount — RBAC permission surface.
 //!   * Secret — secret material embedded in a manifest.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use fact_model::{
     sha256_prefixed, AttrValue, Entity, EntityKind, FactModel, Provenance, Relation,
@@ -35,6 +35,14 @@ pub const SENSITIVE_HOST_PATHS: &[&str] = &[
     "/", "/etc", "/root", "/proc", "/sys", "/boot", "/dev", "/run", "/var/run", "/var/lib/docker",
     "/usr", "/bin", "/sbin", "/lib", "/var/run/docker.sock",
 ];
+
+/// Bounds on the Service→Workload selector-match post-pass. A crafted manifest
+/// with thousands of services and pods all sharing one label set would emit
+/// O(services × workloads) ConnectsTo edges — a reproduced multi-GB-allocation
+/// DoS. These cap the emitted edges (memory) and comparisons (CPU); real
+/// manifests stay orders of magnitude below.
+const MAX_CONNECTS_EDGES: usize = 50_000;
+const MAX_CONNECTS_COMPARES: usize = 5_000_000;
 
 struct Builder {
     entities: Vec<Entity>,
@@ -89,9 +97,11 @@ pub fn parse(input: &str) -> FactModel {
 /// Parse Kubernetes manifests, returning a human-readable error on invalid YAML.
 /// A valid manifest with no recognised objects yields an empty (but Ok) model.
 pub fn try_parse(input: &str) -> Result<FactModel, String> {
-    // Reject oversized / alias-bomb input before the YAML loader materializes it.
+    // Reject oversized / alias-bomb / over-deep input before the YAML loader
+    // (and yaml-loc) recurse on it.
     fact_model::limits::check_input_size(input)?;
     fact_model::limits::check_yaml_aliases(input)?;
+    fact_model::limits::check_yaml_depth(input)?;
     let input_hash = sha256_prefixed(input.as_bytes());
     let mut b = Builder {
         entities: Vec::new(),
@@ -125,16 +135,33 @@ pub fn try_parse(input: &str) -> Result<FactModel, String> {
 
     // Post-pass: connect each external/internal Service to the Workloads it selects
     // (same namespace, selector is a subset of the pod labels). This is the
-    // reachability spine the K8s attack-path rule walks.
-    for s in &services {
-        if s.selector.is_empty() {
-            continue;
-        }
+    // reachability spine the K8s attack-path rule walks. Bucketed by namespace so
+    // we never compare across namespaces, and bounded (edges + comparisons) so a
+    // crafted manifest with thousands of all-matching services × workloads can't
+    // emit O(S×W) edges — a reproduced memory-blowup DoS. Vecs drive iteration
+    // order, so the output stays deterministic.
+    {
+        let mut wls_by_ns: HashMap<&str, Vec<&WorkloadInfo>> = HashMap::new();
         for w in &workloads {
-            if w.namespace == s.namespace
-                && s.selector.iter().all(|kv| w.labels.contains(kv))
-            {
-                b.relation(RelationKind::ConnectsTo, &s.id, &w.id);
+            wls_by_ns.entry(w.namespace.as_str()).or_default().push(w);
+        }
+        let mut edges = 0usize;
+        let mut compares = 0usize;
+        'connect: for s in &services {
+            if s.selector.is_empty() {
+                continue;
+            }
+            if let Some(ns_wls) = wls_by_ns.get(s.namespace.as_str()) {
+                for w in ns_wls {
+                    if edges >= MAX_CONNECTS_EDGES || compares >= MAX_CONNECTS_COMPARES {
+                        break 'connect;
+                    }
+                    compares += 1;
+                    if s.selector.iter().all(|kv| w.labels.contains(kv)) {
+                        b.relation(RelationKind::ConnectsTo, &s.id, &w.id);
+                        edges += 1;
+                    }
+                }
             }
         }
     }
@@ -895,5 +922,25 @@ spec:
         let fm = parse(y);
         let svc = fm.entities.iter().find(|e| e.id == "service:prod/web").expect("service entity");
         assert_eq!(svc.attr("external").and_then(|v| v.as_bool()), Some(true));
+    }
+
+    #[test]
+    fn service_workload_match_is_bounded() {
+        // Every Service selecting every Pod would emit O(services × workloads)
+        // ConnectsTo edges (a reproduced memory-blowup DoS). The post-pass caps it.
+        let n = 250; // n*n = 62_500 > MAX_CONNECTS_EDGES
+        let mut y = String::new();
+        for i in 0..n {
+            y.push_str(&format!("apiVersion: v1\nkind: Service\nmetadata:\n  name: s{i}\nspec:\n  selector:\n    app: x\n---\n"));
+        }
+        for i in 0..n {
+            y.push_str(&format!("apiVersion: v1\nkind: Pod\nmetadata:\n  name: p{i}\n  labels:\n    app: x\nspec:\n  containers:\n    - name: c\n      image: nginx@sha256:aa\n---\n"));
+        }
+        let edges = parse(&y)
+            .relations
+            .iter()
+            .filter(|r| r.kind == RelationKind::ConnectsTo)
+            .count();
+        assert!(edges <= MAX_CONNECTS_EDGES, "ConnectsTo not bounded: {edges}");
     }
 }

@@ -191,8 +191,13 @@ fn find_tokens(line: &str, prefix: &str, min: usize, max: usize, cls: Cls) -> Ve
         let start = search + rel;
         let before_ok = start == 0 || !is_ident(bytes[start - 1]);
         let body_start = start + prefix.len();
+        // Cap the class scan at max+1 bytes: a run longer than `max` is rejected
+        // by the `body <= max` guard below anyway, so scanning the whole line is
+        // wasted — and unbounded it makes find_tokens O(n^2) on a repeated prefix
+        // (a reproduced multi-hour CPU hang).
         let mut k = body_start;
-        while k < bytes.len() && cls(bytes[k]) {
+        let scan_limit = bytes.len().min(body_start + max + 1);
+        while k < scan_limit && cls(bytes[k]) {
             k += 1;
         }
         let body = k - body_start;
@@ -270,6 +275,16 @@ mod tests {
         let fm = parse("key = AKIAIOSFODNN7EXAMPLE\n");
         assert!(fm.entities.iter().any(|e| e.attr("secret_type").and_then(|v| v.as_str())
             == Some("SECRET-AWS-ACCESS-KEY")));
+    }
+
+    #[test]
+    fn repeated_prefix_scan_is_bounded() {
+        // Unbounded, the inner class-scan made find_tokens O(n^2): "AKIA"*N is all
+        // upper-alnum, so AKIA matches every 4 bytes and each scan ran to end-of-line
+        // — a reproduced multi-hour hang. Capped at max+1 this returns immediately
+        // (matching nothing, since every run is longer than a real AWS key).
+        let s = "AKIA".repeat(200_000);
+        assert!(parse(&s).entities.is_empty());
     }
 
     #[test]

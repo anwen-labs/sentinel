@@ -96,9 +96,11 @@ pub fn parse(input: &str) -> FactModel {
 /// Parse a GitHub Actions workflow, returning a human-readable error on invalid
 /// YAML. A valid document with no `jobs:` yields an empty (but Ok) model.
 pub fn try_parse(input: &str) -> Result<FactModel, String> {
-    // Reject oversized / alias-bomb input before the YAML loader materializes it.
+    // Reject oversized / alias-bomb / over-deep input before the YAML loader
+    // (and yaml-loc) recurse on it.
     fact_model::limits::check_input_size(input)?;
     fact_model::limits::check_yaml_aliases(input)?;
+    fact_model::limits::check_yaml_depth(input)?;
     let input_hash = sha256_prefixed(input.as_bytes());
     let mut b = Builder {
         entities: Vec::new(),
@@ -283,7 +285,23 @@ fn runs_on_string(node: &Yaml) -> String {
             .filter_map(|x| x.as_str())
             .collect::<Vec<_>>()
             .join(","),
-        _ => String::new(),
+        // The `runs-on: { group:, labels: [...] }` mapping form — flatten the
+        // labels (string or array) and group into the string the self-hosted
+        // check inspects, so `labels: [self-hosted, …]` is still detected.
+        _ => {
+            let mut parts: Vec<String> = Vec::new();
+            match &node["labels"] {
+                Yaml::String(s) => parts.push(s.clone()),
+                Yaml::Array(xs) => {
+                    parts.extend(xs.iter().filter_map(|x| x.as_str().map(str::to_string)))
+                }
+                _ => {}
+            }
+            if let Some(g) = node["group"].as_str() {
+                parts.push(g.to_string());
+            }
+            parts.join(",")
+        }
     }
 }
 
@@ -308,8 +326,50 @@ fn is_sha(reference: &str) -> bool {
     reference.len() == 40 && reference.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
+/// Canonicalize a GitHub Actions expression for substring matching: drop
+/// whitespace and rewrite index notation `['x']` / `["x"]` / `[x]` into property
+/// notation `.x`. GitHub evaluates `obj['key']` identically to `obj.key`, so an
+/// attacker can write `github.event.pull_request['head']['ref']` to slip past a
+/// matcher that only knows the dotted form; after this both spell the same string.
+fn canonicalize_expr(expr: &str) -> String {
+    let s: Vec<u8> = expr.bytes().filter(|b| !b.is_ascii_whitespace()).collect();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < s.len() {
+        if s[i] == b'[' {
+            let mut j = i + 1;
+            let quote = if j < s.len() && (s[j] == b'\'' || s[j] == b'"') {
+                let q = s[j];
+                j += 1;
+                Some(q)
+            } else {
+                None
+            };
+            let key_start = j;
+            while j < s.len() && (s[j].is_ascii_alphanumeric() || s[j] == b'_' || s[j] == b'-') {
+                j += 1;
+            }
+            let key_end = j;
+            if let Some(q) = quote {
+                if j < s.len() && s[j] == q {
+                    j += 1;
+                }
+            }
+            if key_end > key_start && j < s.len() && s[j] == b']' {
+                out.push('.');
+                out.push_str(std::str::from_utf8(&s[key_start..key_end]).unwrap_or(""));
+                i = j + 1;
+                continue;
+            }
+        }
+        out.push(s[i] as char);
+        i += 1;
+    }
+    out
+}
+
 fn refers_to_untrusted_ref(ref_value: &str) -> bool {
-    let v = ref_value.replace(' ', "");
+    let v = canonicalize_expr(ref_value);
     v.contains("pull_request.head") || v.contains("github.head_ref")
 }
 
@@ -321,7 +381,7 @@ fn injection_context(run: &str) -> Option<String> {
     while let Some(start) = find_from(bytes, b"${{", i) {
         let after = start + 3;
         if let Some(end) = find_from(bytes, b"}}", after) {
-            let expr = &run[after..end];
+            let expr = canonicalize_expr(&run[after..end]);
             for ctx in INJECTION_CONTEXTS {
                 if expr.contains(ctx) {
                     return Some((*ctx).to_string());
@@ -348,6 +408,33 @@ fn find_from(haystack: &[u8], needle: &[u8], from: usize) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bracket_notation_ref_is_untrusted() {
+        // github.event.pull_request['head']['ref'] evaluates the same as the
+        // dotted form — the matcher must catch both (and github['head_ref']).
+        assert!(refers_to_untrusted_ref("${{ github.event.pull_request['head']['ref'] }}"));
+        assert!(refers_to_untrusted_ref("${{ github['head_ref'] }}"));
+        assert!(refers_to_untrusted_ref("${{ github.event.pull_request.head.ref }}"));
+        assert!(!refers_to_untrusted_ref("${{ github.sha }}"));
+    }
+
+    #[test]
+    fn bracket_notation_injection_is_detected() {
+        assert!(injection_context("echo \"${{ github.event.issue['title'] }}\"").is_some());
+        assert!(injection_context("echo \"${{ github.event.issue.title }}\"").is_some());
+        assert!(injection_context("echo \"${{ github.sha }}\"").is_none());
+    }
+
+    #[test]
+    fn runs_on_mapping_form_detects_self_hosted() {
+        // The `runs-on: { group:, labels: [self-hosted, …] }` mapping form must
+        // still surface "self-hosted" to the runner check.
+        let docs =
+            yaml_rust2::YamlLoader::load_from_str("{ group: g, labels: [self-hosted, linux] }")
+                .unwrap();
+        assert!(runs_on_string(&docs[0]).to_lowercase().contains("self-hosted"));
+    }
 
     #[test]
     fn determinism() {

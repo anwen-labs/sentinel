@@ -73,10 +73,22 @@ struct Parser<'a> {
     s: &'a [u8],
     src: &'a str,
     pos: usize,
+    /// Set when the scanner hits EOF inside an unterminated construct (e.g. a
+    /// heredoc with no closing delimiter). [`parse_document_checked`] surfaces it
+    /// so a malformed file is rejected, not silently parsed into a partial model.
+    unterminated: bool,
 }
 
-/// Parse a full HCL document into its top-level blocks.
+/// Parse a full HCL document into its top-level blocks (lenient).
 pub fn parse_document(src: &str) -> Vec<Block> {
+    parse_document_checked(src).0
+}
+
+/// Like [`parse_document`], but also reports whether the scanner hit an
+/// unterminated construct (a heredoc with no closing delimiter), meaning the
+/// file is malformed and the block list may be truncated. Callers that must not
+/// fail open (CLI/WASM) reject such input rather than scan a partial model.
+pub fn parse_document_checked(src: &str) -> (Vec<Block>, bool) {
     // Strip a UTF-8 BOM (common on Windows-authored files) so byte indexing
     // starts on a char boundary.
     let src = src.strip_prefix('\u{feff}').unwrap_or(src);
@@ -84,9 +96,10 @@ pub fn parse_document(src: &str) -> Vec<Block> {
         s: src.as_bytes(),
         src,
         pos: 0,
+        unterminated: false,
     };
     let (_attrs, blocks) = p.parse_body(true, 0);
-    blocks
+    (blocks, p.unterminated)
 }
 
 impl<'a> Parser<'a> {
@@ -354,6 +367,11 @@ impl<'a> Parser<'a> {
             } else if c == b'"' {
                 self.pos += 1;
                 break;
+            } else if c == b'\n' {
+                // HCL quoted strings are single-line (multi-line uses heredocs);
+                // an un-escaped newline means the string was never closed — stop
+                // so a dangling quote can't swallow the rest of the file.
+                break;
             } else {
                 // advance by one UTF-8 codepoint
                 let ch_len = utf8_len(c);
@@ -406,12 +424,19 @@ impl<'a> Parser<'a> {
                 self.pos += 1;
             }
             let line = self.src[line_start..self.pos].trim();
-            if line == delim || self.pos >= self.s.len() {
+            if line == delim {
                 let body = self.src[body_start..line_start].to_string();
                 if self.peek() == b'\n' {
                     self.pos += 1;
                 }
                 return body;
+            }
+            if self.pos >= self.s.len() {
+                // EOF before the closing delimiter — the heredoc is unterminated.
+                // Flag it so try_parse rejects the file (real Terraform errors on
+                // it too) instead of silently swallowing every following block.
+                self.unterminated = true;
+                return self.src[body_start..line_start].to_string();
             }
             if self.peek() == b'\n' {
                 self.pos += 1;
@@ -424,24 +449,33 @@ impl<'a> Parser<'a> {
     /// spanning lines is captured whole).
     fn read_raw_value(&mut self) -> String {
         let start = self.pos;
-        let mut depth: i32 = 0;
+        // Track *typed* bracket nesting (a stack of expected closers) instead of a
+        // single depth counter. A mismatched closer — e.g. the enclosing block's
+        // `}` arriving while an unbalanced `(` is open (`x = ( }`) — means the
+        // expression is malformed: stop and leave that byte for the enclosing
+        // parser, rather than mis-balancing and swallowing the rest of the file
+        // (which silently dropped every following block). Balanced multi-line
+        // expressions like `jsonencode({ ... })` are still captured whole.
+        let mut stack: Vec<u8> = Vec::new();
         while self.pos < self.s.len() {
             let c = self.s[self.pos];
             match c {
-                b'(' | b'[' | b'{' => depth += 1,
-                b')' | b']' | b'}' => {
-                    if depth == 0 {
-                        break;
+                b'(' => stack.push(b')'),
+                b'[' => stack.push(b']'),
+                b'{' => stack.push(b'}'),
+                b')' | b']' | b'}' => match stack.last() {
+                    Some(&expected) if expected == c => {
+                        stack.pop();
                     }
-                    depth -= 1;
-                }
+                    _ => break,
+                },
                 b'"' => {
                     self.skip_raw_string();
                     continue;
                 }
-                b'\n' if depth == 0 => break,
-                b',' if depth == 0 => break,
-                b'#' if depth == 0 => break,
+                b'\n' if stack.is_empty() => break,
+                b',' if stack.is_empty() => break,
+                b'#' if stack.is_empty() => break,
                 _ => {}
             }
             self.pos += 1;
@@ -458,6 +492,9 @@ impl<'a> Parser<'a> {
                     self.pos += 1;
                     break;
                 }
+                // Unterminated string: HCL strings are single-line, so a bare
+                // newline ends it — don't consume the rest of the file.
+                b'\n' => break,
                 _ => self.pos += 1,
             }
         }

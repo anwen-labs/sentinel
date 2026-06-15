@@ -70,7 +70,7 @@ fn build_model_and_pack(
             Box::new(GhaCorePack::new()),
         )),
         InputKind::Terraform => Ok((
-            terraform_parser::parse(input),
+            terraform_parser::try_parse(input)?,
             Box::new(TerraformCorePack::new()),
         )),
         InputKind::Secrets => Ok((
@@ -239,6 +239,24 @@ fn looks_templated(input: &str) -> bool {
     false
 }
 
+/// Decide whether to reject an input as an un-renderable templated manifest.
+///
+/// The guard exists to give a clear error for Helm/Kustomize/Ansible YAML the
+/// parser can't read. It must NOT fire for GitHub Actions: bare `{{ }}` is
+/// legitimate there (e.g. docker/metadata-action's `enable={{is_default_branch}}`
+/// and `{{version}}`/`{{date}}` tag templates). An explicit `--type` also wins —
+/// the caller has asserted the format, and the parser surfaces a real error if
+/// they're wrong — so the guard only applies to auto-detected, non-GHA input.
+fn rejected_as_templated(kind: InputType, path: &str, input: &str) -> bool {
+    if !matches!(kind, InputType::Auto) {
+        return false; // explicit --type: trust the caller
+    }
+    if matches!(detect_input(path, input), InputKind::GithubActions) {
+        return false; // auto-detected GitHub Actions: bare {{ }} is valid
+    }
+    looks_templated(input)
+}
+
 fn scan(args: ScanArgs) -> ExitCode {
     // A directory path → whole-repo scan (every config file under it).
     if args.path != "-" && std::path::Path::new(&args.path).is_dir() {
@@ -254,8 +272,9 @@ fn scan(args: ScanArgs) -> ExitCode {
     };
 
     // Templated manifests can't be scanned as-is — fail clearly rather than
-    // emit a misleading parse error or a false-clean result.
-    if looks_templated(&input) {
+    // emit a misleading parse error or a false-clean result. GitHub Actions
+    // (bare {{ }} tag templates) and explicit --type are exempt.
+    if rejected_as_templated(args.r#type, &args.path, &input) {
         eprintln!(
             "error: {} looks like a templated manifest (Helm/Kustomize Go-template syntax). \
              Render it first (e.g. `helm template . | sentinel scan -`) and scan the output.",
@@ -685,6 +704,26 @@ mod tests {
         assert!(!looks_templated("run: echo ${{ github.sha }}")); // GHA — allowed
         assert!(!looks_templated("image: nginx:1.25")); // plain
         assert!(!looks_templated("x: ${var}")); // TF-style interpolation
+    }
+
+    #[test]
+    fn templating_guard_exempts_github_actions_and_explicit_type() {
+        // docker/metadata-action uses bare {{ }} tag templates inside a genuine
+        // GitHub Actions workflow — must NOT be rejected as a Helm/Go template.
+        let gha = "on: push\n\
+                   jobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n\
+                   \x20     - uses: docker/metadata-action@v5\n\
+                   \x20       with:\n          tags: type=raw,enable={{is_default_branch}}\n";
+        assert!(!rejected_as_templated(InputType::Auto, ".github/workflows/docker.yml", gha));
+        // Explicit --type github-actions must bypass the guard too.
+        assert!(!rejected_as_templated(InputType::GithubActions, "docker.yml", gha));
+
+        // A real Helm/Go template (auto-detected, non-GHA) is still rejected.
+        let helm = "apiVersion: v1\nkind: Service\nmetadata:\n  name: {{ .Values.name }}\n";
+        assert!(rejected_as_templated(InputType::Auto, "service.yaml", helm));
+
+        // Explicit --type wins: caller asserts the format; the parser errors if wrong.
+        assert!(!rejected_as_templated(InputType::Compose, "chart.yaml", helm));
     }
 
     #[test]

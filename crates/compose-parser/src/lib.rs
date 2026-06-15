@@ -86,9 +86,11 @@ pub fn parse(input: &str) -> FactModel {
 pub fn try_parse(input: &str) -> Result<FactModel, String> {
     // Tolerate a leading UTF-8 BOM (common from Windows editors).
     let input = input.strip_prefix('\u{feff}').unwrap_or(input);
-    // Reject oversized / alias-bomb input before the YAML loader materializes it.
+    // Reject oversized / alias-bomb / over-deep input before the YAML loader
+    // (and yaml-loc) recurse on it.
     fact_model::limits::check_input_size(input)?;
     fact_model::limits::check_yaml_aliases(input)?;
+    fact_model::limits::check_yaml_depth(input)?;
     let input_hash = sha256_prefixed(input.as_bytes());
     let mut b = Builder {
         entities: Vec::new(),

