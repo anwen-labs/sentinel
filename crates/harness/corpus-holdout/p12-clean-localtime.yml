@@ -1,0 +1,9 @@
+services:
+  app:
+    image: nginx@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    user: "10001"
+    read_only: true
+    volumes:
+      - "/etc/localtime:/etc/localtime:ro"
+    environment:
+      DB_PASSWORD: ${DB_PASSWORD}

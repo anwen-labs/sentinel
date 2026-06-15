@@ -1,0 +1,7 @@
+# EXPECT: High GHA-SCRIPT-INJECTION
+on: [issues]
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Title is ${{ github.event.issue.title }}"

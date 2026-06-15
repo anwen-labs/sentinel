@@ -32,7 +32,7 @@ pub const DANGEROUS_CAPS: &[&str] = &[
 
 /// Host paths that are dangerous to expose via a hostPath volume.
 pub const SENSITIVE_HOST_PATHS: &[&str] = &[
-    "/", "/etc", "/root", "/proc", "/sys", "/boot", "/dev", "/var/run", "/var/lib/docker",
+    "/", "/etc", "/root", "/proc", "/sys", "/boot", "/dev", "/run", "/var/run", "/var/lib/docker",
     "/usr", "/bin", "/sbin", "/lib", "/var/run/docker.sock",
 ];
 
@@ -100,6 +100,10 @@ pub fn try_parse(input: &str) -> Result<FactModel, String> {
     };
     let mut services: Vec<ServiceInfo> = Vec::new();
     let mut workloads: Vec<WorkloadInfo> = Vec::new();
+    // Service IDs an Ingress routes to — external entry points (see post-pass below).
+    let mut ingress_backends: HashSet<String> = HashSet::new();
+    // Service -> Workload edges from manual Endpoints/EndpointSlice (selectorless svcs).
+    let mut endpoint_edges: Vec<(String, String)> = Vec::new();
 
     let docs = YamlLoader::load_from_str(input).map_err(|e| format!("invalid YAML: {e}"))?;
     // Per-document source lines (K8s manifests are commonly multi-doc). Both this
@@ -112,10 +116,10 @@ pub fn try_parse(input: &str) -> Result<FactModel, String> {
         // to no precise line for them.
         if let Some(items) = doc["items"].as_vec() {
             for item in items {
-                parse_doc(&mut b, item, None, &mut services, &mut workloads);
+                parse_doc(&mut b, item, None, &mut services, &mut workloads, &mut ingress_backends, &mut endpoint_edges);
             }
         } else {
-            parse_doc(&mut b, doc, lm, &mut services, &mut workloads);
+            parse_doc(&mut b, doc, lm, &mut services, &mut workloads, &mut ingress_backends, &mut endpoint_edges);
         }
     }
 
@@ -131,6 +135,40 @@ pub fn try_parse(input: &str) -> Result<FactModel, String> {
                 && s.selector.iter().all(|kv| w.labels.contains(kv))
             {
                 b.relation(RelationKind::ConnectsTo, &s.id, &w.id);
+            }
+        }
+    }
+
+    // An Ingress is an external entry point: mark every backend Service it routes
+    // to as externally reachable, even when the Service itself is ClusterIP. The
+    // reachability rule keys on Service.external, so this feeds it unchanged.
+    if !ingress_backends.is_empty() {
+        let exposed_ports: HashSet<String> = b
+            .relations
+            .iter()
+            .filter(|r| r.kind == RelationKind::Exposes && ingress_backends.contains(&r.from))
+            .map(|r| r.to.clone())
+            .collect();
+        for e in b.entities.iter_mut() {
+            let ingress_exposed = (e.kind == EntityKind::Service && ingress_backends.contains(&e.id))
+                || (e.kind == EntityKind::PortBinding && exposed_ports.contains(&e.id));
+            if ingress_exposed {
+                e.attributes.insert("external".into(), AttrValue::Bool(true));
+            }
+        }
+    }
+
+    // Manual Endpoints/EndpointSlice: connect a (selectorless) Service to the
+    // workload its endpoints target — but only when that workload exists as a bare
+    // Pod of the same name (Deployment-generated pod names aren't modeled).
+    if !endpoint_edges.is_empty() {
+        let wl_ids: HashSet<&str> = workloads.iter().map(|w| w.id.as_str()).collect();
+        let mut added: HashSet<(&str, &str)> = HashSet::new();
+        for (svc_id, wl_id) in &endpoint_edges {
+            // Sets are membership-only; the Vec drives order (deterministic). Dedup
+            // so repeated addresses to the same pod don't emit duplicate edges.
+            if wl_ids.contains(wl_id.as_str()) && added.insert((svc_id.as_str(), wl_id.as_str())) {
+                b.relation(RelationKind::ConnectsTo, svc_id, wl_id);
             }
         }
     }
@@ -180,6 +218,8 @@ fn parse_doc(
     lm: Option<&LineMap>,
     services: &mut Vec<ServiceInfo>,
     workloads: &mut Vec<WorkloadInfo>,
+    ingress_backends: &mut HashSet<String>,
+    endpoint_edges: &mut Vec<(String, String)>,
 ) {
     let kind = match doc["kind"].as_str() {
         Some(k) => k,
@@ -194,6 +234,13 @@ fn parse_doc(
             parse_workload(b, doc, lm, kind, name, namespace, workloads);
         }
         "Service" => parse_service(b, doc, lm, name, namespace, services),
+        "Ingress" => collect_ingress_backends(doc, namespace, ingress_backends),
+        "HTTPRoute" | "TCPRoute" | "TLSRoute" | "GRPCRoute" => {
+            collect_route_backends(doc, namespace, ingress_backends)
+        }
+        "Endpoints" | "EndpointSlice" => {
+            collect_endpoint_edges(doc, kind, namespace, endpoint_edges)
+        }
         "Role" | "ClusterRole" => parse_role(b, doc, lm, kind, name, namespace),
         "RoleBinding" | "ClusterRoleBinding" => {
             parse_role_binding(b, doc, lm, kind, name, namespace)
@@ -408,6 +455,109 @@ fn parse_container(
                         .with_line(line),
                 });
                 b.relation(RelationKind::GrantsCapability, &cid, &capid);
+            }
+        }
+    }
+}
+
+/// The backend Service name an Ingress block references, supporting both
+/// networking.k8s.io/v1 (`backend.service.name`) and the legacy beta form
+/// (`backend.serviceName`).
+fn ingress_backend_name(backend: &Yaml) -> Option<&str> {
+    backend["service"]["name"].as_str().or_else(|| backend["serviceName"].as_str())
+}
+
+/// Collect the Service IDs an Ingress routes to: `spec.defaultBackend` plus every
+/// `spec.rules[].http.paths[].backend`. An Ingress is an external entry point, so
+/// these Services are externally reachable regardless of their own type.
+fn collect_ingress_backends(doc: &Yaml, namespace: &str, out: &mut HashSet<String>) {
+    let spec = &doc["spec"];
+    if let Some(n) = ingress_backend_name(&spec["defaultBackend"]) {
+        out.insert(format!("service:{namespace}/{n}"));
+    }
+    // Legacy extensions/v1beta1 cluster-wide default backend lived at spec.backend.
+    if let Some(n) = ingress_backend_name(&spec["backend"]) {
+        out.insert(format!("service:{namespace}/{n}"));
+    }
+    if let Some(rules) = spec["rules"].as_vec() {
+        for rule in rules {
+            if let Some(paths) = rule["http"]["paths"].as_vec() {
+                for p in paths {
+                    if let Some(n) = ingress_backend_name(&p["backend"]) {
+                        out.insert(format!("service:{namespace}/{n}"));
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Collect the Service IDs a Gateway-API route points at (HTTPRoute / TCPRoute /
+/// TLSRoute / GRPCRoute via spec.rules[].backendRefs[]). Like an Ingress, a route
+/// is an external entry point; a backendRef may target another namespace.
+fn collect_route_backends(doc: &Yaml, namespace: &str, out: &mut HashSet<String>) {
+    if let Some(rules) = doc["spec"]["rules"].as_vec() {
+        for rule in rules {
+            if let Some(refs) = rule["backendRefs"].as_vec() {
+                for r in refs {
+                    // backendRef defaults to kind Service; skip explicit non-Service.
+                    if r["kind"].as_str().map(|k| k != "Service").unwrap_or(false) {
+                        continue;
+                    }
+                    if let Some(n) = r["name"].as_str() {
+                        let ns = r["namespace"].as_str().unwrap_or(namespace);
+                        out.insert(format!("service:{ns}/{n}"));
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The workload an Endpoints targetRef points at. A targetRef.name is a Pod name,
+/// which resolves to a workload only when that workload is a bare Pod of the same
+/// name (Deployment-generated pod names are not modeled).
+fn endpoint_target_workload(tref: &Yaml, namespace: &str) -> Option<String> {
+    if tref["kind"].as_str().map(|k| k != "Pod").unwrap_or(false) {
+        return None;
+    }
+    // A targetRef may name a Pod in another namespace (manual endpoints can cross
+    // namespaces); honour it, falling back to the Endpoints object's namespace —
+    // mirroring the Gateway backendRef handling in collect_route_backends.
+    let ns = tref["namespace"].as_str().unwrap_or(namespace);
+    tref["name"].as_str().map(|n| format!("workload:{ns}/{n}"))
+}
+
+/// Collect Service -> Workload reachability edges from an Endpoints / EndpointSlice
+/// object — how a *selectorless* Service is wired to pods. The owning Service is the
+/// Endpoints' own name, or an EndpointSlice's `kubernetes.io/service-name` label.
+fn collect_endpoint_edges(doc: &Yaml, kind: &str, namespace: &str, out: &mut Vec<(String, String)>) {
+    let svc = if kind == "EndpointSlice" {
+        doc["metadata"]["labels"]["kubernetes.io/service-name"].as_str()
+    } else {
+        doc["metadata"]["name"].as_str()
+    };
+    let svc = match svc {
+        Some(s) => s,
+        None => return,
+    };
+    let svc_id = format!("service:{namespace}/{svc}");
+    if kind == "EndpointSlice" {
+        if let Some(eps) = doc["endpoints"].as_vec() {
+            for ep in eps {
+                if let Some(wl) = endpoint_target_workload(&ep["targetRef"], namespace) {
+                    out.push((svc_id.clone(), wl));
+                }
+            }
+        }
+    } else if let Some(subsets) = doc["subsets"].as_vec() {
+        for ss in subsets {
+            if let Some(addrs) = ss["addresses"].as_vec() {
+                for a in addrs {
+                    if let Some(wl) = endpoint_target_workload(&a["targetRef"], namespace) {
+                        out.push((svc_id.clone(), wl));
+                    }
+                }
             }
         }
     }
@@ -706,5 +856,44 @@ spec:
         assert!(fm.relations.iter().any(|r| r.kind == RelationKind::ConnectsTo
             && r.from == "service:default/web"
             && r.to == "workload:default/web"));
+    }
+
+    #[test]
+    fn endpoints_resolve_cross_namespace_targetref() {
+        // A manual Endpoints targetRef may name a Pod in another namespace.
+        let y = "apiVersion: v1\nkind: Endpoints\nmetadata:\n  name: web\n  namespace: prod\nsubsets:\n  - addresses:\n      - ip: 10.0.0.9\n        targetRef: { kind: Pod, name: web, namespace: other }\n---\napiVersion: v1\nkind: Pod\nmetadata:\n  name: web\n  namespace: other\nspec:\n  containers:\n    - name: app\n      image: nginx@sha256:aa\n      securityContext: { privileged: true }\n";
+        let fm = parse(y);
+        assert!(fm.relations.iter().any(|r| r.kind == RelationKind::ConnectsTo
+            && r.from == "service:prod/web" && r.to == "workload:other/web"));
+    }
+
+    #[test]
+    fn endpoints_connect_selectorless_service_to_pod() {
+        // A selectorless Service wired by manual Endpoints to a bare Pod must get a
+        // ConnectsTo edge (the reachability spine), even with no selector.
+        let y = "apiVersion: v1\nkind: Service\nmetadata:\n  name: web\n  namespace: prod\nspec:\n  type: LoadBalancer\n  ports: [{ port: 80 }]\n---\napiVersion: v1\nkind: Endpoints\nmetadata:\n  name: web\n  namespace: prod\nsubsets:\n  - addresses:\n      - ip: 10.0.0.5\n        targetRef: { kind: Pod, name: web }\n---\napiVersion: v1\nkind: Pod\nmetadata:\n  name: web\n  namespace: prod\nspec:\n  containers:\n    - name: app\n      image: nginx@sha256:aa\n      securityContext: { privileged: true }\n";
+        let fm = parse(y);
+        assert!(fm.relations.iter().any(|r| r.kind == RelationKind::ConnectsTo
+            && r.from == "service:prod/web" && r.to == "workload:prod/web"));
+    }
+
+    #[test]
+    fn httproute_marks_clusterip_backend_external() {
+        // Gateway API HTTPRoute -> ClusterIP Service must mark it external, like Ingress.
+        let y = "apiVersion: gateway.networking.k8s.io/v1\nkind: HTTPRoute\nmetadata:\n  name: web\n  namespace: prod\nspec:\n  rules:\n    - backendRefs:\n        - name: web\n          port: 80\n---\napiVersion: v1\nkind: Service\nmetadata:\n  name: web\n  namespace: prod\nspec:\n  type: ClusterIP\n  selector:\n    app: web\n";
+        let fm = parse(y);
+        let svc = fm.entities.iter().find(|e| e.id == "service:prod/web").expect("service entity");
+        assert_eq!(svc.attr("external").and_then(|v| v.as_bool()), Some(true));
+    }
+
+    #[test]
+    fn ingress_marks_clusterip_backend_external() {
+        // An Ingress (declared before the Service) routes to a ClusterIP Service;
+        // that Service must be marked external so the reachability rule treats it
+        // as an entry point (held-out r04).
+        let y = "apiVersion: networking.k8s.io/v1\nkind: Ingress\nmetadata:\n  name: web\n  namespace: prod\nspec:\n  rules:\n    - http:\n        paths:\n          - backend:\n              service:\n                name: web\n---\napiVersion: v1\nkind: Service\nmetadata:\n  name: web\n  namespace: prod\nspec:\n  type: ClusterIP\n  selector:\n    app: web\n  ports:\n    - port: 80\n";
+        let fm = parse(y);
+        let svc = fm.entities.iter().find(|e| e.id == "service:prod/web").expect("service entity");
+        assert_eq!(svc.attr("external").and_then(|v| v.as_bool()), Some(true));
     }
 }

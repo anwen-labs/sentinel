@@ -11,7 +11,7 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use engine::{detect_input, pack_version_hash, run_pack, InputKind, Pack, ReportCore, Severity};
@@ -106,7 +106,13 @@ struct Totals {
 }
 
 fn main() -> ExitCode {
-    let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("corpus");
+    // Default to the in-repo corpus; an optional first arg points the harness at
+    // another corpus dir (e.g. the held-out set) without clobbering the original.
+    let corpus = match std::env::args().nth(1) {
+        Some(dir) => PathBuf::from(dir),
+        None => Path::new(env!("CARGO_MANIFEST_DIR")).join("corpus"),
+    };
+    println!("corpus: {}\n", corpus.display());
     let mut files: Vec<_> = match fs::read_dir(&corpus) {
         Ok(rd) => rd
             .filter_map(|e| e.ok().map(|e| e.path()))
@@ -165,10 +171,11 @@ fn main() -> ExitCode {
             t.det_fail += 1;
         }
 
-        // produced multiset by rule_id (+ a severity sample per rule)
-        let mut prod: HashMap<String, u32> = HashMap::new();
+        // produced multiset: rule_id -> the severities produced for it, so we can
+        // validate the severity an EXPECT label claims, not just the rule id.
+        let mut prod: HashMap<String, Vec<Severity>> = HashMap::new();
         for f in &findings {
-            *prod.entry(f.rule_id.clone()).or_insert(0) += 1;
+            prod.entry(f.rule_id.clone()).or_default().push(f.severity);
         }
 
         let expects_real: Vec<&Expect> = expects.iter().filter(|e| !e.gap).collect();
@@ -179,29 +186,48 @@ fn main() -> ExitCode {
         let mut fnr = 0u32;
 
         for e in &expects_real {
-            match prod.get_mut(&e.rule) {
-                Some(c) if *c > 0 => {
-                    *c -= 1;
+            // A true positive requires the right rule AT the labeled severity.
+            let exact = prod.get(&e.rule).and_then(|v| v.iter().position(|s| *s == e.sev));
+            match exact {
+                Some(i) => {
+                    prod.get_mut(&e.rule).unwrap().remove(i);
                     tp += 1;
                     t.tp += 1;
                     if is_crit_high(e.sev) {
                         t.ch_tp += 1;
                     }
                 }
-                _ => {
+                None => {
+                    // Rule produced at the WRONG severity? Consume it and report the
+                    // mismatch as a single miss (not also a separate false positive).
+                    let wrong = match prod.get_mut(&e.rule) {
+                        Some(v) if !v.is_empty() => Some(v.remove(0)),
+                        _ => None,
+                    };
                     fnr += 1;
                     t.fn_real += 1;
                     if is_crit_high(e.sev) {
                         t.ch_fn += 1;
                     }
-                    miss_lines.push(format!("  MISS {name}: {} {}", e.sev.as_str(), e.rule));
+                    match wrong {
+                        Some(got) => miss_lines.push(format!(
+                            "  MISS {name}: {} {} (produced at {})",
+                            e.sev.as_str(),
+                            e.rule,
+                            got.as_str()
+                        )),
+                        None => {
+                            miss_lines.push(format!("  MISS {name}: {} {}", e.sev.as_str(), e.rule))
+                        }
+                    }
                 }
             }
         }
         for e in &expects_gap {
+            // Known gaps are matched by rule id only (the point is detection at all).
             match prod.get_mut(&e.rule) {
-                Some(c) if *c > 0 => {
-                    *c -= 1;
+                Some(v) if !v.is_empty() => {
+                    v.remove(0);
                     t.gaps_closed += 1;
                 }
                 _ => {
@@ -210,8 +236,8 @@ fn main() -> ExitCode {
                 }
             }
         }
-        for (rule, c) in &prod {
-            for _ in 0..*c {
+        for (rule, sevs) in &prod {
+            for _ in sevs {
                 fp += 1;
                 t.fp += 1;
                 fp_lines.push(format!("  FP   {name}: {rule}"));

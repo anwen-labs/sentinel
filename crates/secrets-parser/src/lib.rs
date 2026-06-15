@@ -21,6 +21,13 @@ const SECRET_NAME_FRAGMENTS: &[&str] = &[
     "CLIENTSECRET", "AUTHTOKEN", "PASSPHRASE",
 ];
 
+/// Well-known documentation / example tokens that are deliberate non-secrets
+/// (e.g. the AWS docs example access key). They are dropped only when they appear
+/// inside a comment — prose documentation — but still fire when used as a real
+/// value (using the docs example AS your value is itself a misconfiguration, and
+/// the in-repo corpus relies on that). Other allowlist scanners do the same.
+const PLACEHOLDER_TOKENS: &[&str] = &["AKIAIOSFODNN7EXAMPLE", "AKIAI44QH8DHBEXAMPLE"];
+
 struct Match {
     rule: &'static str,
     line: usize,
@@ -72,6 +79,15 @@ fn scan(input: &str) -> Vec<Match> {
         let lineno = i + 1;
         let trimmed = line.trim_start();
         let is_comment = trimmed.starts_with('#') || trimmed.starts_with("//");
+        // Broader comment recognition (INI `;`, SQL `--`, block `/* * <!--`), used
+        // ONLY to drop well-known docs-example placeholders — never to gate real-token
+        // or generic detection, so this can never hide a real secret.
+        let is_comment_marker = is_comment
+            || trimmed.starts_with(';')
+            || trimmed.starts_with("--")
+            || trimmed.starts_with("/*")
+            || trimmed.starts_with('*')
+            || trimmed.starts_with("<!--");
 
         let mut strong_hit = false;
 
@@ -87,8 +103,15 @@ fn scan(input: &str) -> Vec<Match> {
         }
 
         // Prefixed provider tokens (exact-ish lengths to keep precision high).
+        // Scanned on every line, comments included: a commented-out credential
+        // (`#KEY=ghp_realtoken`) is still a leak that needs rotation. Only a
+        // well-known documentation placeholder is dropped, and only inside a
+        // comment (prose) — it still fires when used as a real value.
         for (rule, prefix, min, max, cls) in TOKEN_PATTERNS {
             for tok in find_tokens(line, prefix, *min, *max, *cls) {
+                if is_comment_marker && PLACEHOLDER_TOKENS.contains(&tok.as_str()) {
+                    continue;
+                }
                 out.push(Match {
                     rule,
                     line: lineno,
@@ -293,5 +316,32 @@ mod tests {
         assert!(!r2.contains("hunter"), "generic secret value must not leak: {r2}");
         assert!(!r2.contains("passphrase"), "generic secret value must not leak: {r2}");
         assert!(r2.contains("chars)"), "length hint expected: {r2}");
+    }
+
+    #[test]
+    fn comment_token_handling() {
+        // Docs example placeholder in a comment -> dropped (held-out p15).
+        assert!(parse("# example: AKIAIOSFODNN7EXAMPLE\n").entities.is_empty());
+        // The same placeholder used AS a value still fires (in-repo TP preserved).
+        assert!(parse("AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n").entities.iter().any(|e| e
+            .attr("secret_type").and_then(|v| v.as_str()) == Some("SECRET-AWS-ACCESS-KEY")));
+        // A REAL provider token that is merely commented out is still a leak -> fires.
+        assert!(parse("# old_token=ghp_0123456789abcdefghijklmnopqrstuvwxyz\n").entities.iter()
+            .any(|e| e.attr("secret_type").and_then(|v| v.as_str()) == Some("SECRET-GITHUB-TOKEN")));
+    }
+
+    #[test]
+    fn placeholder_dropped_in_other_comment_styles() {
+        // Docs-example tokens in INI/SQL/block comments must not false-positive.
+        for line in [
+            "; example: AKIAIOSFODNN7EXAMPLE\n",
+            "-- example: AKIAIOSFODNN7EXAMPLE\n",
+            "/* AKIAIOSFODNN7EXAMPLE */\n",
+        ] {
+            assert!(parse(line).entities.is_empty(), "placeholder should be dropped in: {line}");
+        }
+        // ...but a REAL token in such a comment still fires (only placeholders drop).
+        assert!(parse("; ghp_0123456789abcdefghijklmnopqrstuvwxyz\n").entities.iter()
+            .any(|e| e.attr("secret_type").and_then(|v| v.as_str()) == Some("SECRET-GITHUB-TOKEN")));
     }
 }

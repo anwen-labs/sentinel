@@ -4,7 +4,7 @@
 
 use fact_model::{sha256_hex, sha256_prefixed, FactModel, Json};
 
-pub const ENGINE_VERSION: &str = "0.1.0";
+pub const ENGINE_VERSION: &str = "0.1.3";
 
 /// Static metadata describing a rule, for the in-app rule catalog. Lets the UI
 /// render exactly the rules the engine ships, instead of a separate doc.

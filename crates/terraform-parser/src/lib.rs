@@ -9,6 +9,7 @@
 mod hcl;
 
 use std::collections::BTreeMap;
+use std::net::Ipv6Addr;
 
 use fact_model::{
     sha256_prefixed, AttrValue, Entity, EntityKind, FactModel, Provenance, Relation,
@@ -77,7 +78,10 @@ fn parse_resource(b: &mut Builder, block: &Block) {
     a.insert("name".into(), AttrValue::Str(name.clone()));
 
     match rtype.as_str() {
-        "aws_security_group" => {
+        // aws_default_security_group / aws_default_vpc use the identical inline
+        // `ingress {}` schema; the default SG attaches to anything without its own,
+        // so a wide-open default is a classic real-world misconfiguration.
+        "aws_security_group" | "aws_default_security_group" | "aws_default_vpc" => {
             let (open, detail) = security_group_open(block);
             a.insert("open_ingress".into(), AttrValue::Bool(open));
             if let Some(d) = detail {
@@ -87,6 +91,16 @@ fn parse_resource(b: &mut Builder, block: &Block) {
         "aws_security_group_rule" => {
             let is_ingress = block.attr("type").map(|v| v.text() == "ingress").unwrap_or(false);
             let open = is_ingress && cidr_open(block);
+            a.insert("open_ingress".into(), AttrValue::Bool(open));
+            if open {
+                a.insert("open_ingress_detail".into(), AttrValue::Str(port_detail(block)));
+            }
+        }
+        // The v4/v5 idiom AWS recommends: a standalone ingress rule (always
+        // ingress) using scalar cidr_ipv4 / cidr_ipv6 attributes rather than an
+        // inline `ingress {}` block. The pack rule reads `open_ingress` unchanged.
+        "aws_vpc_security_group_ingress_rule" => {
+            let open = cidr_open_standalone(block);
             a.insert("open_ingress".into(), AttrValue::Bool(open));
             if open {
                 a.insert("open_ingress_detail".into(), AttrValue::Str(port_detail(block)));
@@ -146,8 +160,41 @@ fn cidr_open(block: &Block) -> bool {
         .unwrap_or(false)
         || block
             .attr("ipv6_cidr_blocks")
-            .map(|v| v.contains_scalar("::/0"))
+            .map(value_has_open_ipv6)
             .unwrap_or(false)
+}
+
+/// True if a value (a string, or a list/object holding one) contains an all-open
+/// IPv6 CIDR in any spelling — applies the semantic `is_ipv6_all` check across the
+/// `ipv6_cidr_blocks` list so non-canonical `::/0` spellings are caught inline too.
+fn value_has_open_ipv6(v: &Value) -> bool {
+    match v {
+        Value::Str(s) | Value::Raw(s) => is_ipv6_all(s),
+        Value::List(xs) => xs.iter().any(value_has_open_ipv6),
+        Value::Obj(a) => a.iter().any(|(_, x)| value_has_open_ipv6(x)),
+    }
+}
+
+/// The standalone v4/v5 ingress-rule resource (`aws_vpc_security_group_ingress_rule`)
+/// uses scalar `cidr_ipv4` / `cidr_ipv6` attributes rather than the `cidr_blocks`
+/// list of an inline `ingress {}` block.
+fn cidr_open_standalone(block: &Block) -> bool {
+    block.attr("cidr_ipv4").map(|v| v.text() == "0.0.0.0/0").unwrap_or(false)
+        || block.attr("cidr_ipv6").map(|v| is_ipv6_all(&v.text())).unwrap_or(false)
+}
+
+/// True if an IPv6 CIDR denotes the whole internet (::/0) in any valid spelling
+/// (`::/0`, `::0/0`, `0:0:0:0:0:0:0:0/0`, …): prefix 0 over the unspecified
+/// address. `0.0.0.0/0` is the only all-open IPv4 spelling, so IPv4 stays literal.
+fn is_ipv6_all(cidr: &str) -> bool {
+    match cidr.split_once('/') {
+        Some((addr, prefix)) if prefix.trim() == "0" => addr
+            .trim()
+            .parse::<Ipv6Addr>()
+            .map(|a| a == Ipv6Addr::UNSPECIFIED)
+            .unwrap_or(false),
+        _ => false,
+    }
 }
 
 fn port_detail(block: &Block) -> String {
@@ -306,6 +353,64 @@ mod tests {
         let fm = parse(src);
         let r = fm.entities.iter().find(|e| e.kind == EntityKind::Resource).unwrap();
         assert_eq!(r.attr("open_ingress").and_then(|v| v.as_bool()), Some(true));
+    }
+
+    #[test]
+    fn standalone_ingress_rule_flagged() {
+        // v4/v5 aws_vpc_security_group_ingress_rule open to the internet (held-out r03).
+        let src = "resource \"aws_vpc_security_group_ingress_rule\" \"ssh\" {\n  cidr_ipv4 = \"0.0.0.0/0\"\n  from_port = 22\n  to_port = 22\n}\n";
+        let r = parse(src);
+        let res = r.entities.iter().find(|e| e.kind == EntityKind::Resource).unwrap();
+        assert_eq!(res.attr("open_ingress").and_then(|v| v.as_bool()), Some(true));
+        // IPv6 ::/0 too.
+        let src6 = "resource \"aws_vpc_security_group_ingress_rule\" \"all6\" {\n  cidr_ipv6 = \"::/0\"\n}\n";
+        let r6 = parse(src6);
+        let res6 = r6.entities.iter().find(|e| e.kind == EntityKind::Resource).unwrap();
+        assert_eq!(res6.attr("open_ingress").and_then(|v| v.as_bool()), Some(true));
+        // A private CIDR must NOT be flagged (precision).
+        let priv_src = "resource \"aws_vpc_security_group_ingress_rule\" \"ssh\" {\n  cidr_ipv4 = \"10.0.0.0/8\"\n}\n";
+        let rp = parse(priv_src);
+        let resp = rp.entities.iter().find(|e| e.kind == EntityKind::Resource).unwrap();
+        assert_eq!(resp.attr("open_ingress").and_then(|v| v.as_bool()), Some(false));
+    }
+
+    #[test]
+    fn inline_sg_noncanonical_ipv6_flagged() {
+        // The inline ingress {} block must also catch non-canonical IPv6 ::/0.
+        let src = "resource \"aws_security_group\" \"web\" {\n  ingress {\n    ipv6_cidr_blocks = [\"::0/0\"]\n  }\n}\n";
+        let r = parse(src);
+        let res = r.entities.iter().find(|e| e.kind == EntityKind::Resource).unwrap();
+        assert_eq!(res.attr("open_ingress").and_then(|v| v.as_bool()), Some(true));
+        // A private IPv6 prefix inline must NOT flag (precision).
+        let priv_src = "resource \"aws_security_group\" \"w\" {\n  ingress {\n    ipv6_cidr_blocks = [\"2001:db8::/32\"]\n  }\n}\n";
+        let rp = parse(priv_src);
+        let resp = rp.entities.iter().find(|e| e.kind == EntityKind::Resource).unwrap();
+        assert_eq!(resp.attr("open_ingress").and_then(|v| v.as_bool()), Some(false));
+    }
+
+    #[test]
+    fn standalone_ingress_noncanonical_ipv6_flagged() {
+        // All valid spellings of the all-open IPv6 range must be caught.
+        for cidr in ["::/0", "::0/0", "0:0:0:0:0:0:0:0/0"] {
+            let src = format!("resource \"aws_vpc_security_group_ingress_rule\" \"a\" {{\n  cidr_ipv6 = \"{cidr}\"\n}}\n");
+            let r = parse(&src);
+            let res = r.entities.iter().find(|e| e.kind == EntityKind::Resource).unwrap();
+            assert_eq!(res.attr("open_ingress").and_then(|v| v.as_bool()), Some(true), "{cidr}");
+        }
+        // A non-zero IPv6 prefix must NOT be flagged (precision).
+        let src = "resource \"aws_vpc_security_group_ingress_rule\" \"a\" {\n  cidr_ipv6 = \"2001:db8::/32\"\n}\n";
+        let r = parse(src);
+        let res = r.entities.iter().find(|e| e.kind == EntityKind::Resource).unwrap();
+        assert_eq!(res.attr("open_ingress").and_then(|v| v.as_bool()), Some(false));
+    }
+
+    #[test]
+    fn default_security_group_open_flagged() {
+        // aws_default_security_group left wide open to the internet (inline ingress).
+        let src = "resource \"aws_default_security_group\" \"default\" {\n  ingress {\n    from_port = 0\n    to_port = 0\n    protocol = \"-1\"\n    cidr_blocks = [\"0.0.0.0/0\"]\n  }\n}\n";
+        let r = parse(src);
+        let res = r.entities.iter().find(|e| e.kind == EntityKind::Resource).unwrap();
+        assert_eq!(res.attr("open_ingress").and_then(|v| v.as_bool()), Some(true));
     }
 
     #[test]

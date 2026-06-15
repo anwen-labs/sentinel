@@ -50,6 +50,13 @@ fn short(id: &str) -> &str {
     id.split_once(':').map(|(_, r)| r).unwrap_or(id)
 }
 
+/// True if a hostPath source is the Docker daemon socket, whether written as
+/// /var/run/docker.sock or the modern /run/docker.sock symlink target (basename
+/// match, mirroring the Compose pack).
+fn is_docker_socket(src: &str) -> bool {
+    src.rsplit('/').next() == Some("docker.sock")
+}
+
 fn containers(m: &FactModel) -> impl Iterator<Item = &Entity> {
     m.entities.iter().filter(|e| e.kind == EntityKind::Container)
 }
@@ -165,19 +172,20 @@ fn r_hostpath(m: &FactModel) -> Vec<Finding> {
         .filter(|e| e.attr("host_path").and_then(|v| v.as_bool()) == Some(true))
         .filter_map(|e| {
             let src = e.attr("source").and_then(|v| v.as_str())?;
-            let sensitive = src == "/var/run/docker.sock"
+            let is_sock = is_docker_socket(src);
+            let sensitive = is_sock
                 || SENSITIVE_HOST_PATHS.iter().any(|p| {
                     src == *p || (*p != "/" && src.starts_with(&format!("{p}/")))
                 })
                 || src == "/";
-            let severity = if src == "/var/run/docker.sock" {
+            let severity = if is_sock {
                 Severity::Critical
             } else if sensitive {
                 Severity::High
             } else {
                 Severity::Medium
             };
-            let extra = if src == "/var/run/docker.sock" {
+            let extra = if is_sock {
                 " (the Docker socket — full control of the node's container runtime)"
             } else if sensitive {
                 " (a sensitive host path)"
@@ -412,7 +420,7 @@ fn r_reachable_node_compromise(m: &FactModel) -> Vec<Finding> {
         if r.kind == RelationKind::Mounts {
             if let Some(mnt) = by_id.get(r.to.as_str()) {
                 let src = mnt.attr("source").and_then(|v| v.as_str()).unwrap_or("");
-                let sensitive = src == "/var/run/docker.sock"
+                let sensitive = is_docker_socket(src)
                     || SENSITIVE_HOST_PATHS.iter().any(|p| {
                         src == *p || (*p != "/" && src.starts_with(&format!("{p}/")))
                     })
@@ -529,7 +537,7 @@ pub fn catalog() -> Vec<engine::RuleMeta> {
     use engine::Severity::{Critical, High, Low, Medium};
     let t = "Kubernetes";
     vec![
-        RuleMeta { id: "K8S-REACHABLE-NODE-COMPROMISE", title: "Reachable node-compromise path", target: t, severity: Critical, controls: &["CWE-668", "CWE-250", "ATTACK-T1611"], summary: "Cross-resource: an external Service (NodePort/LoadBalancer) selects a Workload that runs privileged / adds a dangerous capability / mounts a sensitive hostPath — reaching the service chains to node or cluster takeover.", fix: "Keep node-takeover surfaces off anything an external Service selects; front with a hardened gateway.", strict: false },
+        RuleMeta { id: "K8S-REACHABLE-NODE-COMPROMISE", title: "Reachable node-compromise path", target: t, severity: Critical, controls: &["CWE-668", "CWE-250", "ATTACK-T1611"], summary: "Cross-resource: an external Service (NodePort/LoadBalancer, or a ClusterIP an Ingress or Gateway-API route points to) selects a Workload that runs privileged / adds a dangerous capability / mounts a sensitive hostPath — reaching the service chains to node or cluster takeover.", fix: "Keep node-takeover surfaces off anything an external Service selects; front with a hardened gateway.", strict: false },
         RuleMeta { id: "K8S-PRIVILEGED-CONTAINER", title: "Privileged container", target: t, severity: Critical, controls: &["CWE-250", "CIS-K8s-5.2.2", "ATTACK-T1611"], summary: "A container sets securityContext.privileged: true — full host device/kernel access, trivial node takeover.", fix: "Remove privileged; grant only the specific capabilities required.", strict: false },
         RuleMeta { id: "K8S-CAP-ADD-ALL", title: "All capabilities added", target: t, severity: Critical, controls: &["CWE-250", "CIS-K8s-5.2.9", "ATTACK-T1611"], summary: "A container adds ALL Linux capabilities — equivalent to privileged.", fix: "Drop all capabilities and add back only the few needed.", strict: false },
         RuleMeta { id: "K8S-CLUSTER-ADMIN-BINDING", title: "cluster-admin granted", target: t, severity: Critical, controls: &["CWE-269", "CIS-K8s-5.1.1", "ATTACK-T1098"], summary: "A (Cluster)RoleBinding binds the built-in cluster-admin role — full control of the cluster.", fix: "Bind a least-privilege role; reserve cluster-admin for break-glass.", strict: false },
@@ -613,6 +621,45 @@ impl Pack for K8sCorePack {
             counts,
             status,
             pack_policy: "any Critical or High => Flagged-Gap".to_string(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fact_model::{Provenance, SourceDescriptor};
+    use std::collections::BTreeMap;
+
+    fn hostpath_model(src: &str) -> FactModel {
+        let mut a = BTreeMap::new();
+        a.insert("source".into(), AttrValue::Str(src.into()));
+        a.insert("host_path".into(), AttrValue::Bool(true));
+        FactModel {
+            schema_version: "0".into(),
+            source: SourceDescriptor {
+                kind: "kubernetes".into(),
+                input_hash: String::new(),
+                parser_version: String::new(),
+            },
+            entities: vec![Entity {
+                id: format!("mount:ns/wl/{src}"),
+                kind: EntityKind::Mount,
+                attributes: a,
+                provenance: Provenance::explicit(String::new()),
+            }],
+            relations: vec![],
+        }
+    }
+
+    #[test]
+    fn docker_socket_hostpath_is_critical_at_both_paths() {
+        // The Docker socket via either spelling is full node-runtime takeover.
+        for src in ["/var/run/docker.sock", "/run/docker.sock"] {
+            let f = r_hostpath(&hostpath_model(src));
+            assert_eq!(f.len(), 1, "{src}");
+            assert_eq!(f[0].rule_id, "K8S-HOSTPATH-MOUNT");
+            assert_eq!(f[0].severity, Severity::Critical, "{src} must be Critical");
         }
     }
 }

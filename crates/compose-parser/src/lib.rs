@@ -21,10 +21,17 @@ const SECRET_NAME_FRAGMENTS: &[&str] = &[
     "CREDENTIAL",
 ];
 
-/// Weak / default credential values (lowercased).
+/// Weak / default credential values (lowercased) — weak under any secret-like name.
 const WEAK_VALUES: &[&str] = &[
     "admin", "password", "root", "changeme", "123456", "secret", "test", "guest", "",
 ];
+
+/// Service-image / tutorial default passwords. These literals are also common as a
+/// *backend identifier* value (e.g. `TOKEN_STORE: redis`), so they only count as
+/// weak when the variable is clearly a password field — not for any secret-like
+/// name — to avoid false positives.
+const WEAK_PASSWORD_DEFAULTS: &[&str] =
+    &["postgres", "mysql", "redis", "mongo", "mongodb", "example", "docker"];
 
 /// Capabilities considered dangerous (used by the pack, exposed for reuse).
 pub const DANGEROUS_CAPS: &[&str] =
@@ -480,6 +487,13 @@ fn yaml_list_contains(y: &Yaml, needle: &str) -> bool {
     })
 }
 
+/// True when the env var name is clearly a password field (PASSWORD/PASSWD/PWD).
+/// Used to scope service-default credential values that double as backend names.
+fn is_password_name(name: &str) -> bool {
+    let norm: String = name.to_uppercase().chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    norm.contains("PASSWORD") || norm.contains("PASSWD") || norm.contains("PWD")
+}
+
 fn is_secret_like(name: &str) -> bool {
     let upper = name.to_uppercase();
     // `*_FILE` points to a secret file (the recommended Docker secrets pattern) —
@@ -548,7 +562,11 @@ fn parse_environment(b: &mut Builder, svc: &str, svc_id: &str, base: &str, env: 
             None => false,
         };
         let weak = match &val {
-            Some(v) => WEAK_VALUES.contains(&v.to_lowercase().as_str()),
+            Some(v) => {
+                let lv = v.to_lowercase();
+                WEAK_VALUES.contains(&lv.as_str())
+                    || (is_password_name(&name) && WEAK_PASSWORD_DEFAULTS.contains(&lv.as_str()))
+            }
             None => false,
         };
 
@@ -665,5 +683,18 @@ mod tests {
             .iter()
             .any(|e| e.kind == EntityKind::Mount
                 && e.attr("source").and_then(|v| v.as_str()) == Some("/var/run/docker.sock")));
+    }
+
+    #[test]
+    fn service_default_value_is_weak() {
+        // POSTGRES_PASSWORD: postgres — a service-name default credential (held-out r09).
+        let fm = parse("services:\n  db:\n    image: nginx:1.25\n    environment:\n      POSTGRES_PASSWORD: postgres\n");
+        let ev = fm.entities.iter().find(|e| e.id == "env_var:db/POSTGRES_PASSWORD").expect("env var");
+        assert_eq!(ev.attr("value_is_weak_default").and_then(|v| v.as_bool()), Some(true));
+        // ...but the same backend identifier under a non-password secret-like name
+        // is NOT a weak credential (e.g. a store selector) — must not false-positive.
+        let fm2 = parse("services:\n  api:\n    image: nginx:1.25\n    environment:\n      TOKEN_STORE: redis\n");
+        let ev2 = fm2.entities.iter().find(|e| e.id == "env_var:api/TOKEN_STORE").expect("env var");
+        assert_eq!(ev2.attr("value_is_weak_default").and_then(|v| v.as_bool()), Some(false));
     }
 }

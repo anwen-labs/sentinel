@@ -19,7 +19,7 @@ Sentinel ships **70 rules** across **6 targets** (Docker Compose, Dockerfile, Ku
 ### DOCKER-SOCKET-MOUNT
 **Critical** · CWE-250, CIS-Docker-5.31, ATTACK-T1611
 
-A container bind-mounts /var/run/docker.sock, giving it full control of the Docker daemon — effectively root on the host.
+A container bind-mounts the Docker socket (/var/run/docker.sock or the /run/docker.sock symlink), giving it full control of the Docker daemon — effectively root on the host.
 
 **Fix:** Remove the mount; if daemon access is required, use a scoped socket proxy, read-only.
 
@@ -244,7 +244,7 @@ A RUN uses sudo — unnecessary in a build and can mask privilege issues.
 ### K8S-REACHABLE-NODE-COMPROMISE
 **Critical** · CWE-668, CWE-250, ATTACK-T1611
 
-Cross-resource: an external Service (NodePort/LoadBalancer) selects a Workload that runs privileged / adds a dangerous capability / mounts a sensitive hostPath — reaching the service chains to node or cluster takeover.
+Cross-resource: an external Service (NodePort/LoadBalancer, or a ClusterIP an Ingress or Gateway-API route points to) selects a Workload that runs privileged / adds a dangerous capability / mounts a sensitive hostPath — reaching the service chains to node or cluster takeover.
 
 **Fix:** Keep node-takeover surfaces off anything an external Service selects; front with a hardened gateway.
 

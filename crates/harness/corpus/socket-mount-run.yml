@@ -1,0 +1,12 @@
+# Docker socket bind-mounted via the modern /run/docker.sock path. On current
+# Docker, /var/run is a symlink to /run, so this is the same socket and must be
+# caught exactly like the /var/run form. Regression guard: before the basename
+# match this was a silent MISS and the verdict came back CLEARED.
+# EXPECT: Critical DOCKER-SOCKET-MOUNT
+services:
+  app:
+    image: nginx@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    user: "10001"
+    read_only: true
+    volumes:
+      - "/run/docker.sock:/run/docker.sock"

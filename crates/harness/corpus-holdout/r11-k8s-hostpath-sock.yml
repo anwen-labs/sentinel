@@ -1,0 +1,13 @@
+# EXPECT: Critical K8S-HOSTPATH-MOUNT
+apiVersion: v1
+kind: Pod
+metadata: { name: app, namespace: prod }
+spec:
+  containers:
+    - name: app
+      image: nginx@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      securityContext: { runAsNonRoot: true, privileged: false, allowPrivilegeEscalation: false }
+      volumeMounts: [{ name: sock, mountPath: /var/run/docker.sock }]
+  volumes:
+    - name: sock
+      hostPath: { path: /run/docker.sock }

@@ -27,7 +27,7 @@ const SENSITIVE_PORTS: &[i64] = &[
 /// Host paths that should never be bind-mounted into a container (besides the
 /// Docker socket, which has its own dedicated rule R1).
 const SENSITIVE_HOST_PATHS: &[&str] = &[
-    "/", "/etc", "/root", "/proc", "/sys", "/boot", "/dev", "/var/run", "/var/lib/docker",
+    "/", "/etc", "/root", "/proc", "/sys", "/boot", "/dev", "/run", "/var/run", "/var/lib/docker",
     "/usr", "/bin", "/sbin", "/lib",
 ];
 
@@ -73,21 +73,40 @@ fn svc_name(id: &str) -> &str {
     id.strip_prefix("service:").unwrap_or(id)
 }
 
+/// True if a bind-mount source points at the Docker daemon socket, whether it's
+/// written as `/var/run/docker.sock` or the modern `/run/docker.sock` symlink
+/// target (on current Docker, `/var/run` is a symlink to `/run`). Matches the
+/// final path component exactly — not a substring — so unrelated paths such as
+/// `/opt/docker.sock.bak` or `/data/not-docker.sock` don't false-positive.
+fn is_docker_socket(src: &str) -> bool {
+    src.rsplit('/').next() == Some("docker.sock")
+}
+
+/// True if a mount source exposes the Docker daemon socket — the socket file
+/// itself, or a host directory that contains it (`/run`, `/var/run`, or `/`),
+/// bind-mounting which hands the container the live socket (host root).
+fn mounts_docker_socket(src: &str) -> bool {
+    is_docker_socket(src) || matches!(src.trim_end_matches('/'), "/run" | "/var/run" | "")
+}
+
 // --- R1 -------------------------------------------------------------------
 fn r1_docker_socket(m: &FactModel) -> Vec<Finding> {
     m.entities
         .iter()
         .filter(|e| e.kind == EntityKind::Mount)
-        .filter(|e| e.attr("source").and_then(|v| v.as_str()) == Some("/var/run/docker.sock"))
-        .map(|e| {
-            finding(
+        .filter_map(|e| {
+            let src = e.attr("source").and_then(|v| v.as_str())?;
+            if !is_docker_socket(src) {
+                return None;
+            }
+            Some(finding(
                 "DOCKER-SOCKET-MOUNT",
                 &["CWE-250", "CIS-Docker-5.31"],
                 Severity::Critical,
                 &e.id,
-                "Container mounts the Docker socket (/var/run/docker.sock) — grants full control of the Docker daemon (host root)".into(),
+                format!("Container mounts the Docker socket ({src}) — grants full control of the Docker daemon (host root)"),
                 "Remove the mount; if daemon access is required, use a scoped socket proxy with an allow-list, read-only.",
-            )
+            ))
         })
         .collect()
 }
@@ -313,8 +332,11 @@ fn r11_sensitive_host_mount(m: &FactModel) -> Vec<Finding> {
         .filter(|e| e.kind == EntityKind::Mount)
         .filter_map(|e| {
             let src = e.attr("source").and_then(|v| v.as_str())?;
-            // The Docker socket has its own dedicated rule (R1).
-            if src == "/var/run/docker.sock" {
+            // The Docker socket has its own dedicated rule (R1), at any path
+            // (/var/run/docker.sock or the /run/docker.sock symlink). Skip it here
+            // so adding "/run" to SENSITIVE_HOST_PATHS doesn't double-report it as
+            // a generic sensitive mount.
+            if is_docker_socket(src) {
                 return None;
             }
             // Benign common mounts (timezone, etc.) are not flagged.
@@ -670,9 +692,9 @@ fn r_reachable_host_takeover(m: &FactModel) -> Vec<Finding> {
         match r.kind {
             RelationKind::Mounts => {
                 if ctx.by_id.get(r.to.as_str()).and_then(|e| e.attr("source")).and_then(|v| v.as_str())
-                    == Some("/var/run/docker.sock")
+                    .map(mounts_docker_socket) == Some(true)
                 {
-                    takeover.entry(r.from.as_str()).or_insert(("mounts the Docker socket", Some(r.to.as_str())));
+                    takeover.entry(r.from.as_str()).or_insert(("mounts a host path that exposes the Docker socket", Some(r.to.as_str())));
                 }
             }
             RelationKind::GrantsCapability => {
@@ -728,7 +750,7 @@ pub fn catalog() -> Vec<engine::RuleMeta> {
     use engine::Severity::{Critical, High, Low, Medium};
     let t = "Docker Compose";
     vec![
-        RuleMeta { id: "DOCKER-SOCKET-MOUNT", title: "Docker socket mounted", target: t, severity: Critical, controls: &["CWE-250", "CIS-Docker-5.31", "ATTACK-T1611"], summary: "A container bind-mounts /var/run/docker.sock, giving it full control of the Docker daemon — effectively root on the host.", fix: "Remove the mount; if daemon access is required, use a scoped socket proxy, read-only.", strict: false },
+        RuleMeta { id: "DOCKER-SOCKET-MOUNT", title: "Docker socket mounted", target: t, severity: Critical, controls: &["CWE-250", "CIS-Docker-5.31", "ATTACK-T1611"], summary: "A container bind-mounts the Docker socket (/var/run/docker.sock or the /run/docker.sock symlink), giving it full control of the Docker daemon — effectively root on the host.", fix: "Remove the mount; if daemon access is required, use a scoped socket proxy, read-only.", strict: false },
         RuleMeta { id: "REACHABLE-HOST-TAKEOVER", title: "Reachable host-takeover path", target: t, severity: Critical, controls: &["CWE-668", "CWE-250", "ATTACK-T1611"], summary: "Cross-resource: an internet-reachable service has a depends_on path to a service that mounts the Docker socket or runs privileged — reaching the front door chains to full host compromise.", fix: "Keep docker.sock/privileged off any internet-reachable path; don't expose the front-end directly.", strict: false },
         RuleMeta { id: "PRIVILEGED-CONTAINER", title: "Privileged container", target: t, severity: Critical, controls: &["CWE-250", "CIS-Docker-5.4", "ATTACK-T1611"], summary: "privileged: true disables container isolation — near-equivalent to root on the host.", fix: "Drop 'privileged'; grant only the specific capabilities required.", strict: false },
         RuleMeta { id: "CAP-ADD-ALL", title: "All capabilities granted", target: t, severity: Critical, controls: &["CWE-250", "CIS-Docker-5.3", "ATTACK-T1611"], summary: "cap_add: [ALL] grants every Linux capability — equivalent to privileged and trivially escapable to the host.", fix: "Remove cap_add: ALL; drop all caps and add back only the few needed.", strict: false },
@@ -831,7 +853,7 @@ impl Pack for SentinelCorePack {
 mod tests {
     use super::*;
     use engine::run_pack;
-    use fact_model::{Entity, Origin, Provenance, SourceDescriptor};
+    use fact_model::{Entity, Provenance, SourceDescriptor};
     use std::collections::BTreeMap;
 
     fn bare_service_model() -> FactModel {
@@ -862,5 +884,59 @@ mod tests {
         let default_n = run_pack(&SentinelCorePack::new(), &m).len();
         let strict_n = run_pack(&SentinelCorePack::with_options(true), &m).len();
         assert_eq!(strict_n - default_n, 3);
+    }
+
+    fn mount_model(source: &str) -> FactModel {
+        let mut attrs = BTreeMap::new();
+        attrs.insert("source".into(), AttrValue::Str(source.into()));
+        FactModel {
+            schema_version: "0".into(),
+            source: SourceDescriptor {
+                kind: "docker_compose".into(),
+                input_hash: String::new(),
+                parser_version: String::new(),
+            },
+            entities: vec![Entity {
+                id: format!("mount:app:{source}"),
+                kind: EntityKind::Mount,
+                attributes: attrs,
+                provenance: Provenance::explicit(String::new()),
+            }],
+            relations: vec![],
+        }
+    }
+
+    #[test]
+    fn docker_socket_caught_at_both_paths() {
+        // Modern Docker symlinks /var/run -> /run; both spellings are the same
+        // socket and must be caught as Critical (the /run form was a silent miss).
+        for src in ["/var/run/docker.sock", "/run/docker.sock"] {
+            let f = r1_docker_socket(&mount_model(src));
+            assert_eq!(f.len(), 1, "expected a socket finding for {src}");
+            assert_eq!(f[0].rule_id, "DOCKER-SOCKET-MOUNT");
+            assert_eq!(f[0].severity, Severity::Critical);
+        }
+    }
+
+    #[test]
+    fn docker_socket_dir_mounts_recognized() {
+        // The socket file or any host dir that contains it exposes the daemon.
+        for s in ["/run/docker.sock", "/var/run/docker.sock", "/run", "/var/run", "/run/", "/"] {
+            assert!(mounts_docker_socket(s), "{s} should expose the socket");
+        }
+        for s in ["/run/foo", "/var/lib", "/data", "/opt/docker.sock.bak"] {
+            assert!(!mounts_docker_socket(s), "{s} should not");
+        }
+    }
+
+    #[test]
+    fn docker_socket_lookalikes_not_flagged() {
+        // Basename match only: substrings / backups / other sockets must not match.
+        for src in ["/opt/docker.sock.bak", "/data/not-docker.sock", "/run/other.sock"] {
+            assert!(
+                r1_docker_socket(&mount_model(src)).is_empty(),
+                "{src} should not match the docker-socket rule"
+            );
+        }
     }
 }

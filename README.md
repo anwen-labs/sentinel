@@ -40,8 +40,9 @@ deep-link into it). Control mappings (CWE, CIS, MITRE ATT&CK): **[CONTROLS.md](C
 ## Scope — one layer, not your whole security program
 
 Security is layered. Sentinel does **configuration misconfiguration** deterministically
-and with zero false positives — we'd rather be precise about a slice than vague about
-everything. Pair it with the tools below for defense in depth.
+and with high precision — we'd rather be precise about a slice than vague about
+everything, and we publish a held-out accuracy benchmark with the misses included
+([BENCHMARK.md](BENCHMARK.md)). Pair it with the tools below for defense in depth.
 
 **Sentinel catches:** misconfigurations across the six formats above (70 rules) —
 container escape, exposed services, default/leaked credentials, over-broad permissions,
@@ -157,8 +158,10 @@ cargo test --workspace
 cargo run -p harness        # eval harness: precision/recall over a labeled corpus
 ```
 
-The harness runs the engine over a labeled corpus (74 fixtures across all six
-formats) and gates CI on precision/recall 1.000 and per-fixture determinism.
+The harness runs the engine over a labeled corpus across all six formats and gates CI
+on precision/recall 1.000 on that corpus plus per-fixture determinism. Accuracy on a
+separate **held-out** set the engine was never tuned on — misses included — is reported
+in [BENCHMARK.md](BENCHMARK.md), with documented limitations in [KNOWN-GAPS.md](KNOWN-GAPS.md).
 
 ## License
 

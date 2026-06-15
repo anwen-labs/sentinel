@@ -1,0 +1,9 @@
+# /run/docker.sock is the modern canonical path (/var/run -> /run symlink), equally root-on-host.
+# EXPECT: Critical DOCKER-SOCKET-MOUNT
+services:
+  app:
+    image: nginx@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    user: "10001"
+    read_only: true
+    volumes:
+      - "/run/docker.sock:/run/docker.sock"
