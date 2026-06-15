@@ -1,0 +1,42 @@
+# cargo-deny — supply-chain hygiene gate for the Sentinel workspace.
+# A security scanner should hold its own dependency tree to the bar it checks for
+# others: no known-vulnerable or yanked crates, only permissive licenses, no
+# wildcard versions or unknown sources. Run locally with `cargo deny check`; CI
+# runs it on every push/PR (.github/workflows/ci.yml).
+
+[advisories]
+version = 2
+# Fail on any RustSec advisory or yanked crate in the graph.
+yanked = "deny"
+# ignore = []   # only add an advisory ID here with a written justification
+
+[licenses]
+version = 2
+# Sentinel is MIT; allow the permissive licenses our (small) dependency tree uses
+# and deny everything else, so a copyleft or unknown license can't slip in.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.9
+
+[bans]
+# Transitive duplicate versions are a smell, not an error. Wildcards are warned,
+# not denied: the workspace's own crates are path deps (not published to crates.io),
+# and cargo-deny's allow-wildcard-paths only exempts private crates — so a hard deny
+# here would fail on our own internal deps. The hard gates that matter for
+# supply-chain hygiene (advisories, licenses, sources) stay strict above.
+multiple-versions = "warn"
+wildcards = "warn"
+
+[sources]
+# Only crates.io (and explicitly-allowed git sources, if ever needed).
+unknown-registry = "deny"
+unknown-git = "deny"

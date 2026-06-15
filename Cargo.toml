@@ -20,5 +20,9 @@ members = [
     "crates/harness",
 ]
 
+[workspace.package]
+license = "MIT"
+repository = "https://github.com/anwen-labs/sentinel"
+
 # Sentinel engine + CLI workspace (the open-source developer tool).
 # The hosted web UI lives in a separate internal repo.

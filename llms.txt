@@ -1,0 +1,31 @@
+# Sentinel
+
+> Deterministic security & compliance scanner for configuration files — Docker
+> Compose, Dockerfile, Kubernetes, GitHub Actions, Terraform/HCL, and secrets.
+> Pure-predicate rules over a normalized fact graph (no LLM, no network): the same
+> input always yields the same findings and a reproducible content-addressed
+> `report_digest` you can re-verify. Ships as a CLI, a GitHub Action, and a
+> 100%-in-browser WASM demo. "Provable, not promised."
+
+Sentinel normalizes each config into a FactModel (entities + relations); rules are
+pure functions over that graph. It reports findings with severity, source lines,
+CWE / CIS / MITRE ATT&CK mappings, and a verdict, in text, JSON, or SARIF 2.1.0.
+Accuracy is measured against a published corpus and a held-out benchmark — misses
+included.
+
+## Docs
+- [README](https://github.com/anwen-labs/sentinel/blob/main/README.md): what it is, install, CLI and CI usage
+- [Rule catalog (RULES.md)](https://github.com/anwen-labs/sentinel/blob/main/RULES.md): every rule, severity, and control mapping (generated from the engine)
+- [Benchmark (BENCHMARK.md)](https://github.com/anwen-labs/sentinel/blob/main/BENCHMARK.md): held-out accuracy benchmark, run on inputs the engine was never tuned on
+- [Known gaps (KNOWN-GAPS.md)](https://github.com/anwen-labs/sentinel/blob/main/KNOWN-GAPS.md): documented limitations and by-design scope
+- [Controls (CONTROLS.md)](https://github.com/anwen-labs/sentinel/blob/main/CONTROLS.md): how rules map to CWE / CIS benchmarks
+- [Security policy (SECURITY.md)](https://github.com/anwen-labs/sentinel/blob/main/SECURITY.md): reporting vulnerabilities; the engine's own threat surface
+
+## Usage
+- CLI: `sentinel scan docker-compose.yml --fail-on high` (auto-detects type; `--format json|sarif`; `sentinel verify report.json <file>` re-checks the digest; `sentinel rules` prints the catalog)
+- GitHub Action: `uses: anwen-labs/sentinel@v0.1.3` with `path:` and `fail-on:` — runs the same engine, no compile in your CI
+- Agent Skill / Claude Code plugin: `/plugin marketplace add anwen-labs/sentinel` then `/plugin install sentinel-scanner@sentinel` — works in Claude Code, Cursor, Copilot, and other Agent-Skills agents
+
+## Optional
+- [Contributing (CONTRIBUTING.md)](https://github.com/anwen-labs/sentinel/blob/main/CONTRIBUTING.md): build, test, the eval harness, and the engine invariants
+- Scope: configuration misconfiguration only — pair with dependency/CVE (Trivy), SAST (CodeQL), git-history secret (gitleaks), and runtime (Falco) scanners for defense in depth
