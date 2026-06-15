@@ -19,9 +19,9 @@ inputs:
     required: false
     default: "text"
   version:
-    description: "sentinel release version to use (without leading v), e.g. 0.1.4."
+    description: "sentinel release version to use (without leading v), e.g. 0.1.5."
     required: false
-    default: "0.1.4"
+    default: "0.1.5"
 
 runs:
   using: composite
