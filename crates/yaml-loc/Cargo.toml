@@ -1,7 +1,7 @@
 [package]
 license.workspace = true
 name = "yaml-loc"
-version = "0.1.0"
+version = "0.1.3"
 edition = "2021"
 
 # Source-line index for YAML: maps a dotted/indexed node path (e.g.
