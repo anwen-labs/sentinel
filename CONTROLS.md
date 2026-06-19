@@ -207,6 +207,117 @@ and are left unmapped: `NO-NEW-PRIVILEGES-MISSING`, `K8S-READONLY-ROOTFS-MISSING
 
 Controls outside the 800-171 r2 CUI subset carry no 800-171 number (shown as — when all controls on a row are outside the subset): SC-39, SC-6, SC-5 (availability/tailored-out), IA-5(7) (no-baseline enhancement), CM-14, SR-4, SR-11 (Supply-Chain-family, new in Rev 5 only), SI-7, SI-10, SC-4, CM-6, AC-6(10), SC-8, SC-28(1) (enhancement only; base SC-28 carries 3.13.16).
 
+## OWASP Top 10 (CI/CD · Docker · Kubernetes)
+
+OWASP mappings tie each finding to the community Top-10 risk it evidences. GitHub Actions and
+secrets map to the **OWASP Top 10 CI/CD Security Risks** (`CICD-SEC-*`), Docker Compose and
+Dockerfile to the **OWASP Docker Top 10** (`D0*`), and Kubernetes to the **OWASP Kubernetes Top
+Ten — 2025 revision** (`K0*`). Each mapping was proposed then **adversarially verified against
+the official OWASP item definition**; _(partial)_ marks a contributory-but-not-determining fit
+(CONTROLS.md only, not a catalog chip). Terraform maps only its hardcoded-secret rule: the
+CI/CD Top 10 describes *pipeline systems*, not the cloud infrastructure Terraform provisions, so
+`TF-OPEN-SECURITY-GROUP` / `TF-PUBLIC-S3-BUCKET` / `TF-UNENCRYPTED-STORAGE` / `TF-IAM-*` are
+honestly left unmapped.
+
+**Item legend (only the items used below):**
+`CICD-SEC-1` Insufficient Flow Control · `CICD-SEC-2` Inadequate Identity & Access Mgmt ·
+`CICD-SEC-3` Dependency Chain Abuse · `CICD-SEC-4` Poisoned Pipeline Execution ·
+`CICD-SEC-5` Insufficient PBAC · `CICD-SEC-6` Insufficient Credential Hygiene ·
+`CICD-SEC-7` Insecure System Configuration —
+`D01` Secure User Mapping · `D03` Network Segmentation · `D04` Secure Defaults & Hardening ·
+`D05` Maintain Security Contexts · `D06` Protect Secrets · `D07` Resource Protection ·
+`D08` Image Integrity & Origin —
+`K01` Insecure Workload Configurations · `K02` Overly Permissive Authorization ·
+`K03` Secrets Management Failures · `K05` Missing Network Segmentation Controls.
+
+### GitHub Actions pack — OWASP CI/CD Top 10
+
+| Rule | OWASP CI/CD item(s) |
+|---|---|
+| `GHA-PWN-REQUEST` | CICD-SEC-4 Poisoned Pipeline Execution; CICD-SEC-1 Insufficient Flow Control |
+| `GHA-SCRIPT-INJECTION` | CICD-SEC-4 Poisoned Pipeline Execution |
+| `GHA-BROAD-PERMISSIONS` | CICD-SEC-5 Insufficient PBAC; CICD-SEC-2 Inadequate IAM |
+| `GHA-SECRETS-INHERIT` | CICD-SEC-6 Insufficient Credential Hygiene; CICD-SEC-2 Inadequate IAM |
+| `GHA-UNPINNED-ACTION` | CICD-SEC-3 Dependency Chain Abuse |
+| `GHA-SELF-HOSTED-RUNNER` | CICD-SEC-1 _(partial)_; CICD-SEC-7 _(partial)_ |
+
+### Secrets pack — OWASP CI/CD Top 10
+
+All eight secret-detection rules map to **CICD-SEC-6 Insufficient Credential Hygiene**
+(`SECRET-AWS-ACCESS-KEY`, `SECRET-PRIVATE-KEY`, `SECRET-GITHUB-TOKEN`, `SECRET-SLACK-TOKEN`,
+`SECRET-STRIPE-KEY`, `SECRET-SENDGRID-KEY`, `SECRET-GOOGLE-API-KEY`, `SECRET-GENERIC-CREDENTIAL`).
+
+### Docker Compose pack — OWASP Docker Top 10
+
+| Rule | OWASP Docker item(s) |
+|---|---|
+| `DOCKER-SOCKET-MOUNT` | D05 Maintain Security Contexts |
+| `REACHABLE-HOST-TAKEOVER` | D03 _(partial)_; D05 _(partial)_ |
+| `PRIVILEGED-CONTAINER` | D04 Secure Defaults & Hardening |
+| `CAP-ADD-ALL` | D04 Secure Defaults & Hardening |
+| `DANGEROUS-CAPABILITY` | D04 Secure Defaults & Hardening |
+| `HOST-NETWORK-MODE` | D03 Network Segmentation |
+| `WEAK-DEFAULT-CREDENTIAL` | D06 Protect Secrets |
+| `DATABASE-AUTH-DISABLED` | D06 Protect Secrets |
+| `REACHABLE-WEAK-CREDENTIAL` | D03 _(partial)_; D06 _(partial)_ |
+| `SENSITIVE-HOST-PATH-MOUNT` | D05 Maintain Security Contexts |
+| `HOST-PID-NAMESPACE` | D05 Maintain Security Contexts |
+| `HOST-IPC-NAMESPACE` | D05 Maintain Security Contexts |
+| `SECURITY-PROFILE-DISABLED` | D04 Secure Defaults & Hardening |
+| `HOST-USERNS-MODE` | D04 Secure Defaults & Hardening |
+| `SECRET-IN-ENVIRONMENT` | D06 Protect Secrets |
+| `SENSITIVE-PORT-PUBLISHED-ALL-IFACES` | D03 Network Segmentation |
+| `IMAGE-UNPINNED` | D08 Image Integrity & Origin |
+| `CONTAINER-RUNS-AS-ROOT-OR-UNKNOWN` | D01 Secure User Mapping |
+| `WRITABLE-ROOT-FILESYSTEM` | D04 _(partial)_ |
+| `PORT-PUBLISHED-ALL-IFACES` | D03 Network Segmentation |
+| `NO-NEW-PRIVILEGES-MISSING` | D04 Secure Defaults & Hardening |
+| `CAP-DROP-ALL-MISSING` | D05 Maintain Security Contexts |
+| `NO-RESOURCE-LIMITS` | D07 Resource Protection |
+
+### Dockerfile pack — OWASP Docker Top 10
+
+| Rule | OWASP Docker item(s) |
+|---|---|
+| `DOCKERFILE-ROOT-USER` | D01 Secure User Mapping |
+| `DOCKERFILE-BASE-IMAGE-UNPINNED` | D08 Image Integrity & Origin |
+| `DOCKERFILE-ADD-REMOTE-URL` | D08 Image Integrity & Origin |
+| `DOCKERFILE-CURL-PIPE-EXECUTION` | D08 Image Integrity & Origin |
+| `DOCKERFILE-BUILD-SECRET` | D06 Protect Secrets |
+| `DOCKERFILE-TLS-VERIFICATION-DISABLED` | D08 Image Integrity & Origin |
+| `DOCKERFILE-SUDO` | D01 _(partial)_ |
+| `DOCKERFILE-WORLD-WRITABLE` | D05 _(partial)_ |
+
+### Kubernetes pack — OWASP Kubernetes Top Ten (2025)
+
+| Rule | OWASP K8s item(s) |
+|---|---|
+| `K8S-PRIVILEGED-CONTAINER` | K01 Insecure Workload Configurations |
+| `K8S-CAP-ADD-ALL` | K01 Insecure Workload Configurations |
+| `K8S-DANGEROUS-CAPABILITY` | K01 Insecure Workload Configurations |
+| `K8S-HOST-NETWORK` | K01 Insecure Workload Configurations; K05 Missing Network Segmentation _(partial)_ |
+| `K8S-HOST-PID` | K01 Insecure Workload Configurations |
+| `K8S-HOST-IPC` | K01 Insecure Workload Configurations |
+| `K8S-HOSTPATH-MOUNT` | K01 Insecure Workload Configurations |
+| `K8S-SECCOMP-UNCONFINED` | K01 Insecure Workload Configurations |
+| `K8S-ALLOW-PRIVILEGE-ESCALATION` | K01 Insecure Workload Configurations |
+| `K8S-RBAC-WILDCARD` | K02 Overly Permissive Authorization |
+| `K8S-RBAC-SECRET-READ` | K02 Overly Permissive Authorization |
+| `K8S-CLUSTER-ADMIN-BINDING` | K02 Overly Permissive Authorization |
+| `K8S-SECRET-IN-MANIFEST` | K03 Secrets Management Failures |
+| `K8S-IMAGE-UNPINNED` | K01 _(partial)_ |
+| `K8S-CONTAINER-RUNS-AS-ROOT` | K01 Insecure Workload Configurations |
+| `K8S-READONLY-ROOTFS-MISSING` | K01 Insecure Workload Configurations |
+| `K8S-ALLOW-PRIV-ESC-NOT-DISABLED` | K01 Insecure Workload Configurations |
+| `K8S-AUTOMOUNT-SA-TOKEN` | K03 Secrets Management Failures; K02 Overly Permissive Authorization _(partial)_ |
+| `K8S-REACHABLE-NODE-COMPROMISE` | K01 Insecure Workload Configurations; K05 Missing Network Segmentation _(partial)_ |
+
+### Terraform pack — OWASP CI/CD Top 10
+
+| Rule | OWASP CI/CD item(s) |
+|---|---|
+| `TF-PLAINTEXT-SECRET` | CICD-SEC-6 Insufficient Credential Hygiene |
+
 ## Verification status
 
 - **CWE mappings: verified** against MITRE CWE across all six packs. The newer packs'
@@ -237,3 +348,10 @@ Controls outside the 800-171 r2 CUI subset carry no 800-171 number (shown as —
   candidates (CM-6 for weak credentials, SR-11 for unpinned images) were dropped and weak
   links marked _(partial)_. Five rules with no genuine 800-53 fit are left unmapped
   (see section header). 800-171 numbers are Rev 2.
+- **OWASP Top 10 (CI/CD · Docker · Kubernetes 2025): verified** — 58 rules carry an OWASP
+  chip. Each mapping was proposed and then adversarially re-checked against the official OWASP
+  item definition (live OWASP project pages); over-broad fits were rejected (the Terraform
+  cloud-infra rules → CICD-SEC-7 were dropped — CI/CD Top 10 covers pipeline systems, not
+  provisioned infrastructure) and weak links marked _(partial)_. Kubernetes uses the **2025**
+  Top Ten revision (K02 = Overly Permissive Authorization, K03 = Secrets Management), so the
+  `K0*` numbers differ from the 2022 list.
