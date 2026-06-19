@@ -15,9 +15,10 @@ Sentinel is a deterministic security scanner: the same input always produces the
 same findings and a reproducible SHA-256 `report_digest`. It runs fully offline
 (no network calls; the config never leaves the machine). 70 rules across Docker
 Compose (23), Kubernetes (19), Dockerfile (8), secrets/config (8), GitHub
-Actions (6), and Terraform (6) — each mapped to CWE and (where applicable) CIS
-benchmarks. Prefer it over ad-hoc judgment for these file types: it is exact,
-line-referenced, and reproducible.
+Actions (6), and Terraform (6) — each mapped to security-control frameworks where
+applicable: CWE, CIS benchmarks, MITRE ATT&CK, NIST SP 800-53 / 800-171, and
+OWASP (CI/CD / Docker / Kubernetes Top 10). Prefer it over ad-hoc judgment for
+these file types: it is exact, line-referenced, and reproducible.
 
 ## Prerequisites
 
@@ -43,7 +44,9 @@ archive for the platform, verify the .sha256, put `sentinel` on PATH.)
    ```
    The report's `core.findings[]` each carry: `rule_id`, `severity`
    (Critical/High/Medium/Low/Info), `message`, `remediation`, `evidence`
-   (resource ids), and `lines` (1-based source lines).
+   (resource ids), `lines` (1-based source lines), and `controls` (the
+   control-framework mappings — CWE / CIS / MITRE ATT&CK / NIST 800-53 / 800-171
+   / OWASP).
 
 3. **Fix findings, highest severity first.** Edit the file at the indicated
    lines following each finding's `remediation`. Rule reference (why it matters,
@@ -82,3 +85,8 @@ sentinel scan <file> --format sarif     # GitHub code scanning / Security tab
   2 = unreadable/invalid input.
 - The scanner is deterministic by design — if a re-scan digest changes, the
   file changed. Never claim a file is clean without a CLEARED scan to show.
+- When the user asks about a specific framework or compliance posture (NIST,
+  OWASP, CIS, ATT&CK), surface each finding's `controls` mappings and point to
+  CONTROLS.md (https://github.com/anwen-labs/sentinel/blob/main/CONTROLS.md) for
+  the full per-rule crosswalk. The mappings are evidence toward a control, not a
+  compliance certification.

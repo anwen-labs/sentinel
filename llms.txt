@@ -9,7 +9,8 @@
 
 Sentinel normalizes each config into a FactModel (entities + relations); rules are
 pure functions over that graph. It reports findings with severity, source lines,
-CWE / CIS / MITRE ATT&CK mappings, and a verdict, in text, JSON, or SARIF 2.1.0.
+control mappings (CWE, CIS, MITRE ATT&CK, NIST SP 800-53 & 800-171, OWASP), and a
+verdict, in text, JSON, or SARIF 2.1.0.
 Accuracy is measured against a published corpus and a held-out benchmark — misses
 included.
 
@@ -18,12 +19,12 @@ included.
 - [Rule catalog (RULES.md)](https://github.com/anwen-labs/sentinel/blob/main/RULES.md): every rule, severity, and control mapping (generated from the engine)
 - [Benchmark (BENCHMARK.md)](https://github.com/anwen-labs/sentinel/blob/main/BENCHMARK.md): held-out accuracy benchmark, run on inputs the engine was never tuned on
 - [Known gaps (KNOWN-GAPS.md)](https://github.com/anwen-labs/sentinel/blob/main/KNOWN-GAPS.md): documented limitations and by-design scope
-- [Controls (CONTROLS.md)](https://github.com/anwen-labs/sentinel/blob/main/CONTROLS.md): how rules map to CWE / CIS benchmarks
+- [Controls (CONTROLS.md)](https://github.com/anwen-labs/sentinel/blob/main/CONTROLS.md): how rules map to CWE, CIS benchmarks, MITRE ATT&CK, NIST SP 800-53 / 800-171, and OWASP (CI/CD / Docker / Kubernetes Top 10)
 - [Security policy (SECURITY.md)](https://github.com/anwen-labs/sentinel/blob/main/SECURITY.md): reporting vulnerabilities; the engine's own threat surface
 
 ## Usage
 - CLI: `sentinel scan docker-compose.yml --fail-on high` (auto-detects type; `--format json|sarif`; `sentinel verify report.json <file>` re-checks the digest; `sentinel rules` prints the catalog)
-- GitHub Action: `uses: anwen-labs/sentinel@v0.1.3` with `path:` and `fail-on:` — runs the same engine, no compile in your CI
+- GitHub Action: `uses: anwen-labs/sentinel@v0.1.6` with `path:` and `fail-on:` — runs the same engine, no compile in your CI
 - Agent Skill / Claude Code plugin: `/plugin marketplace add anwen-labs/sentinel` then `/plugin install sentinel-scanner@sentinel` — works in Claude Code, Cursor, Copilot, and other Agent-Skills agents
 
 ## Optional
